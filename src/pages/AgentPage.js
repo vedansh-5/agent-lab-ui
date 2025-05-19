@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams,
+    Link,
+    // useNavigate
+} from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getAgentDetails, updateAgentInFirestore } from '../services/firebaseService';
 import { deployAgent, deleteAgentDeployment } from '../services/agentService';
