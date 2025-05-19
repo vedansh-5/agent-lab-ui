@@ -133,21 +133,21 @@ def deploy_agent_to_vertex(req: https_fn.CallableRequest):
     Deploys an agent configuration to Vertex AI.  
     Expects agent_config in req.data.  
     """
-    if not req.auth:
-        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required.")
-
-    agent_config_data = req.data.get("agentConfig")
-    agent_doc_id = req.data.get("agentDocId") # Firestore document ID of the agent  
-
-    if not agent_config_data or not agent_doc_id:
-        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="Agent config and ID required.")
-
-    _initialize_vertex_ai() # Initialize Vertex AI SDK  
-    from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent # ADK imports  
-    from vertexai import agent_engines as deployed_agent_engines # For deployed engines  
-
-
     try:
+        if not req.auth:
+            raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required.")
+
+        agent_config_data = req.data.get("agentConfig")
+        agent_doc_id = req.data.get("agentDocId") # Firestore document ID of the agent
+
+        if not agent_config_data or not agent_doc_id:
+            raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="Agent config and ID required.")
+
+        _initialize_vertex_ai() # Initialize Vertex AI SDK
+        from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent # ADK imports
+        from vertexai import agent_engines as deployed_agent_engines # For deployed engines
+
+
         print(f"Received agent config for deployment: {agent_config_data}")
 
         tools_list = []

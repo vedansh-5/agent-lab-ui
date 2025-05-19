@@ -11,7 +11,7 @@ import ErrorMessage from '../components/common/ErrorMessage';
 const AgentPage = () => {
     const { agentId } = useParams();
     const { currentUser } = useAuth();
-    const navigate = useNavigate();
+    // const navigate = useNavigate();
 
     const [agent, setAgent] = useState(null);
     const [loading, setLoading] = useState(true);
