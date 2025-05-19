@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import AgentForm from '../components/agents/AgentForm';
-import { useAuth } from '../hooks/useAuth'; // Corrected path
+import { useAuth } from '../contexts/AuthContext';
 import { createAgentInFirestore, getAgentDetails, updateAgentInFirestore } from '../services/firebaseService';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
@@ -88,4 +88,4 @@ const CreateAgentPage = ({ isEditMode = false }) => {
     );
 };
 
-export default CreateAgentPage;  
+export default CreateAgentPage;

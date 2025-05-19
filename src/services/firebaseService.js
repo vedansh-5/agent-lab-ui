@@ -1,5 +1,15 @@
 import { db } from '../firebaseConfig';
-import { collection, addDoc, getDocs, doc, getDoc, updateDoc, deleteDoc, query, where, serverTimestamp, orderBy } from 'firebase/firestore';
+import { collection,
+    addDoc,
+    getDocs,
+    doc,
+    getDoc,
+    updateDoc,
+    deleteDoc,
+    query,
+    where,
+    serverTimestamp,
+    orderBy } from 'firebase/firestore';
 
 // Agents
 export const createAgentInFirestore = async (userId, agentData) => {
@@ -64,4 +74,4 @@ export const getStoredGofannonManifest = async () => {
         return docSnap.data();
     }
     return null; // Or fetch fresh if not found
-};  
+};

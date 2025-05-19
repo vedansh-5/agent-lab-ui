@@ -1,6 +1,6 @@
 import React from 'react';
 import LoginButton from '../components/auth/LoginButton';
-import { useAuth } from '../hooks/useAuth'; // Corrected path
+import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
 
 const HomePage = () => {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../hooks/useAuth'; // Corrected path
+import { useAuth } from '../contexts/AuthContext';
 import { getAgentDetails, updateAgentInFirestore } from '../services/firebaseService';
 import { deployAgent, deleteAgentDeployment } from '../services/agentService';
 import AgentRunner from '../components/agents/AgentRunner';
@@ -205,4 +205,4 @@ const AgentPage = () => {
     );
 };
 
-export default AgentPage;  
+export default AgentPage;

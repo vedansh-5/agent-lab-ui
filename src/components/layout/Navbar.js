@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth'; // Corrected path
+import { useAuth } from '../../contexts/AuthContext';
 
 const Navbar = () => {
     const { currentUser, logout } = useAuth();
@@ -37,4 +37,4 @@ const Navbar = () => {
     );
 };
 
-export default Navbar;  
+export default Navbar;

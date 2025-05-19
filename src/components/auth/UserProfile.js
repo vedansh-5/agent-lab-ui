@@ -1,5 +1,5 @@
 import React from 'react';
-import { useAuth } from '../../hooks/useAuth'; // Corrected path
+import { useAuth } from '../../contexts/AuthContext';
 
 const UserProfile = () => {
     const { currentUser } = useAuth();
@@ -18,4 +18,4 @@ const UserProfile = () => {
     );
 };
 
-export default UserProfile;  
+export default UserProfile;

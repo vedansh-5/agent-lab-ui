@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '../hooks/useAuth'; // Corrected path
+import { useAuth } from '../contexts/AuthContext';
 import { getUserAgents } from '../services/firebaseService';
 import AgentList from '../components/agents/AgentList';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -56,4 +56,4 @@ const DashboardPage = () => {
     );
 };
 
-export default DashboardPage;  
+export default DashboardPage;

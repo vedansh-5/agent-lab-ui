@@ -11,14 +11,14 @@ initialize_app()
 # Set CORS options for callable functions from your React app  
 options.set_global_options(
     region="us-central1", # Or your preferred region  
-    cors=options.CorsOptions(
-        cors_origins=[
-            "http://localhost:3000", # For local React dev  
-            "https://your-firebase-app-name.web.app",
-            "https://your-firebase-app-name.firebaseapp.com"
-        ],
-        cors_methods=["get", "post", "options"] # Add other methods if needed  
-    )
+    # cors=options.CorsOptions(
+    #     cors_origins=[
+    #         "http://localhost:3000", # For local React dev
+    #         "https://your-firebase-app-name.web.app",
+    #         "https://your-firebase-app-name.firebaseapp.com"
+    #     ],
+    #     cors_methods=["get", "post", "options"] # Add other methods if needed
+    # )
 )
 
 # --- Vertex AI/ADK Specific Imports (place where needed) ---  
