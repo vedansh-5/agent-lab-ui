@@ -1,0 +1,42 @@
+rules_version = '2';  
+service cloud.firestore {  
+  match /databases/{database}/documents {  
+    // Users can only read/write their own profile data  
+    match /users/{userId} {  
+      allow read, write: if request.auth.uid == userId;  
+    }  
+
+    // Agents:  
+    // - Users can create agents.  
+    // - Owners can read, update, delete their agents.  
+    // - (Future: implement sharing logic here)  
+    match /agents/{agentId} {  
+      allow create: if request.auth.uid != null;  
+      allow read, update, delete: if request.auth.uid == resource.data.userId;  
+      // Allow listing by user (dashboard)  
+      allow list: if request.auth.uid != null && request.query.filters[0][2] == request.auth.uid;  
+    }  
+
+    // Agent Runs:  
+    // - Owners of the agent can create runs for that agent.  
+    // - Owners can read their agent's runs.  
+    match /agents/{agentId}/runs/{runId} {  
+      allow create: if request.auth.uid != null && get(/databases/$(database)/documents/agents/$(agentId)).data.userId == request.auth.uid;  
+      allow read: if request.auth.uid == get(/databases/$(database)/documents/agents/$(agentId)).data.userId;  
+      // Allow listing by agentId for the owner  
+      allow list: if request.auth.uid != null && get(/databases/$(database)/documents/agents/$(agentId)).data.userId == request.auth.uid;  
+    }  
+
+    // Gofannon Tool Manifest - anyone authenticated can read  
+    match /gofannonToolManifest/{docId} {  
+      allow read: if request.auth.uid != null;  
+      // Only admin/specific function can write  
+      allow write: if false; // To be updated if an admin function updates this  
+    }  
+
+    // User specific API keys or settings (future)  
+    match /userSettings/{userId} {  
+      allow read, write: if request.auth.uid == userId;  
+    }  
+  }  
+}  
