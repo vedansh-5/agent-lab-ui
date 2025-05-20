@@ -1,14 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { queryAgent } from '../../services/agentService';
-import LoadingSpinner from '../common/LoadingSpinner';
-import ErrorMessage from '../common/ErrorMessage';
+import ErrorMessage from '../common/ErrorMessage'; // Already MUI-fied
+
+import {
+    Paper, Typography, TextField, Button, Box, List, ListItem,
+    ListItemText, Avatar, CircularProgress, IconButton
+} from '@mui/material';
+import SendIcon from '@mui/icons-material/Send';
+import PersonIcon from '@mui/icons-material/Person';
+import SmartToyIcon from '@mui/icons-material/SmartToy'; // Icon for agent
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import RestartAltIcon from '@mui/icons-material/RestartAlt'; // Icon for reset session
 
 const AgentRunner = ({ agentResourceName, agentFirestoreId, adkUserId }) => {
     const [message, setMessage] = useState('');
-    const [conversation, setConversation] = useState([]); // [{type: 'user'/'agent', text: '', events: []}]
+    const [conversation, setConversation] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
-    const [currentSessionId, setCurrentSessionId] = useState(null); // For conversational context
+    const [currentSessionId, setCurrentSessionId] = useState(null);
+    const conversationEndRef = useRef(null);
+
+    const scrollToBottom = () => {
+        conversationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+
+    useEffect(scrollToBottom, [conversation]);
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
@@ -16,101 +32,154 @@ const AgentRunner = ({ agentResourceName, agentFirestoreId, adkUserId }) => {
 
         const userMessage = { type: 'user', text: message, timestamp: new Date() };
         setConversation(prev => [...prev, userMessage]);
+        const currentInput = message;
         setMessage('');
         setIsLoading(true);
         setError(null);
 
         try {
-            // agentFirestoreId is passed to Cloud Function to correctly save the run.
-            const result = await queryAgent(agentResourceName, userMessage.text, adkUserId, currentSessionId, agentFirestoreId);
+            const result = await queryAgent(agentResourceName, currentInput, adkUserId, currentSessionId, agentFirestoreId);
             if (result.success) {
                 const agentResponse = {
                     type: 'agent',
                     text: result.responseText || "Agent responded.",
-                    events: result.events, // For detailed inspection if needed
+                    events: result.events,
                     timestamp: new Date()
                 };
                 setConversation(prev => [...prev, agentResponse]);
-                if (result.sessionId) { // ADK session ID for continuity
-                    setCurrentSessionId(result.sessionId);
+                if (result.adkSessionId) { // Ensure backend returns adkSessionId
+                    setCurrentSessionId(result.adkSessionId);
                 }
             } else {
                 setError(result.message || "Agent query failed.");
+                const errorResponse = { type: 'error', text: result.message || "Failed to get response", timestamp: new Date() };
+                setConversation(prev => [...prev, errorResponse]);
             }
         } catch (err) {
             console.error("Error querying agent:", err);
-            setError(err.message || "An error occurred while querying the agent.");
-            const errorResponse = { type: 'error', text: err.message || "Failed to get response", timestamp: new Date() };
+            const errorMessage = err.message || "An error occurred while querying the agent.";
+            setError(errorMessage);
+            const errorResponse = { type: 'error', text: errorMessage, timestamp: new Date() };
             setConversation(prev => [...prev, errorResponse]);
         } finally {
             setIsLoading(false);
         }
     };
 
+    const handleResetSession = () => {
+        setCurrentSessionId(null);
+        setConversation([]); // Optionally clear conversation
+        setError(null);
+        // Optionally, show a Snackbar confirmation
+        // alert("Session reset. The next message will start a new conversation.");
+    };
+
+    const getAvatar = (type) => {
+        if (type === 'user') return <Avatar sx={{ bgcolor: 'primary.main' }}><PersonIcon /></Avatar>;
+        if (type === 'agent') return <Avatar sx={{ bgcolor: 'secondary.main' }}><SmartToyIcon /></Avatar>;
+        return <Avatar sx={{ bgcolor: 'error.main' }}><ErrorOutlineIcon /></Avatar>;
+    };
+
     return (
-        <div className="bg-white p-6 rounded-lg shadow mt-8">
-            <h2 className="text-2xl font-semibold mb-4">Run Agent</h2>
-            <div className="mb-4 border border-gray-200 rounded-lg p-4 h-96 overflow-y-auto bg-gray-50 space-y-3">
-                {conversation.map((entry, index) => (
-                    <div key={index} className={`flex ${entry.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div
-                            className={`max-w-xl p-3 rounded-lg shadow-sm ${
-                                entry.type === 'user' ? 'bg-blue-500 text-white' :
-                                    entry.type === 'agent' ? 'bg-gray-200 text-gray-800' :
-                                        'bg-red-100 text-red-700' // For error messages  
-                            }`}
-                        >
-                            <p className="text-sm">{entry.text}</p>
-                            <p className="text-xs opacity-70 mt-1">
-                                {new Date(entry.timestamp).toLocaleTimeString()}
-                                {entry.type === 'agent' && currentSessionId && ` (Session: ...${currentSessionId.slice(-6)})`}
-                            </p>
-                            {/* Optionally display raw events for debugging */}
-                            {/* {entry.events && <details><summary>Raw Events</summary><pre className="text-xs whitespace-pre-wrap">{JSON.stringify(entry.events, null, 2)}</pre></details>} */}
-                        </div>
-                    </div>
-                ))}
-                {isLoading && (
-                    <div className="flex justify-start">
-                        <div className="bg-gray-200 text-gray-800 p-3 rounded-lg shadow-sm inline-flex items-center">
-                            <LoadingSpinner small /> <span className="ml-2 text-sm">Agent is thinking...</span>
-                        </div>
-                    </div>
-                )}
-            </div>
+        <Paper elevation={3} sx={{ p: { xs: 2, md: 3 }, mt: 4 }}>
+            <Typography variant="h5" component="h2" gutterBottom>
+                Run Agent
+            </Typography>
 
-            {error && <ErrorMessage message={error} />}
+            <Box
+                sx={{
+                    height: '400px',
+                    overflowY: 'auto',
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 1,
+                    p: 2,
+                    mb: 2,
+                    bgcolor: 'background.paper',
+                }}
+            >
+                <List>
+                    {conversation.map((entry, index) => (
+                        <ListItem key={index} sx={{
+                            display: 'flex',
+                            flexDirection: entry.type === 'user' ? 'row-reverse' : 'row',
+                            mb: 1,
+                        }}>
+                            {getAvatar(entry.type)}
+                            <Paper
+                                elevation={1}
+                                sx={{
+                                    p: 1.5,
+                                    ml: entry.type !== 'user' ? 1.5 : 0,
+                                    mr: entry.type === 'user' ? 1.5 : 0,
+                                    bgcolor: entry.type === 'user' ? 'primary.light' :
+                                        entry.type === 'agent' ? 'grey.200' :
+                                            'error.light',
+                                    color: entry.type === 'user' ? 'primary.contrastText' :
+                                        entry.type === 'agent' ? 'text.primary' :
+                                            'error.contrastText',
+                                    maxWidth: '75%',
+                                    wordBreak: 'break-word',
+                                }}
+                            >
+                                <ListItemText
+                                    primary={<Typography variant="body1">{entry.text}</Typography>}
+                                    secondary={<Typography variant="caption" sx={{ display: 'block', textAlign: entry.type === 'user' ? 'right' : 'left', mt: 0.5 }}>
+                                        {new Date(entry.timestamp).toLocaleTimeString()}
+                                        {entry.type === 'agent' && currentSessionId && ` (S: ...${currentSessionId.slice(-4)})`}
+                                    </Typography>}
+                                />
+                            </Paper>
+                        </ListItem>
+                    ))}
+                    {isLoading && (
+                        <ListItem sx={{ justifyContent: 'flex-start', mb: 1 }}>
+                            <Avatar sx={{ bgcolor: 'secondary.main' }}><SmartToyIcon /></Avatar>
+                            <Paper elevation={1} sx={{ p: 1.5, ml: 1.5, bgcolor: 'grey.200', display: 'inline-flex', alignItems: 'center' }}>
+                                <CircularProgress size={20} sx={{ mr: 1 }} />
+                                <Typography variant="body2" color="text.secondary">Agent is thinking...</Typography>
+                            </Paper>
+                        </ListItem>
+                    )}
+                    <div ref={conversationEndRef} />
+                </List>
+            </Box>
 
-            <form onSubmit={handleSendMessage} className="flex items-center space-x-2">
-                <input
-                    type="text"
+            {error && <ErrorMessage message={error} sx={{ mb: 2 }} />}
+
+            <Box component="form" onSubmit={handleSendMessage} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <TextField
+                    fullWidth
+                    variant="outlined"
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     placeholder="Type your message to the agent..."
-                    className="flex-grow p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
                     disabled={isLoading}
+                    onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) handleSendMessage(e);}}
+                    size="small"
                 />
-                <button
+                <Button
                     type="submit"
+                    variant="contained"
+                    color="primary"
                     disabled={isLoading || !message.trim()}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded disabled:opacity-50"
+                    endIcon={<SendIcon />}
+                    sx={{ height: '100%' }} // Match TextField height
                 >
-                    {isLoading ? 'Sending...' : 'Send'}
-                </button>
-            </form>
-            {currentSessionId && (
-                <button
-                    onClick={() => {
-                        setCurrentSessionId(null);
-                        setConversation([]); // Optionally clear conversation on new session
-                        alert("Session reset. The next message will start a new conversation.");
-                    }}
-                    className="mt-2 text-xs text-blue-500 hover:underline"
-                >
-                    Reset Conversation Session
-                </button>
-            )}
-        </div>
+                    Send
+                </Button>
+                {currentSessionId && (
+                    <IconButton
+                        onClick={handleResetSession}
+                        title="Reset Conversation Session"
+                        color="warning"
+                        disabled={isLoading}
+                    >
+                        <RestartAltIcon />
+                    </IconButton>
+                )}
+            </Box>
+        </Paper>
     );
 };
 

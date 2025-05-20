@@ -1,20 +1,38 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams,
-    Link,
-    // useNavigate
-} from 'react-router-dom';
+import { useParams, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getAgentDetails, updateAgentInFirestore } from '../services/firebaseService';
 import { deployAgent, deleteAgentDeployment } from '../services/agentService';
-import AgentRunner from '../components/agents/AgentRunner';
-import RunHistory from '../components/agents/RunHistory';
-import LoadingSpinner from '../components/common/LoadingSpinner';
-import ErrorMessage from '../components/common/ErrorMessage';
+import AgentRunner from '../components/agents/AgentRunner'; // MUI-fied
+import RunHistory from '../components/agents/RunHistory'; // MUI-fied
+import LoadingSpinner from '../components/common/LoadingSpinner'; // MUI-fied
+import ErrorMessage from '../components/common/ErrorMessage'; // MUI-fied
+
+import {
+    Container,
+    CircularProgress,
+    Stack,
+    Typography,
+    Box,
+    Paper,
+    Grid,
+    Button,
+    List, ListItem, ListItemText, Divider,
+    Alert, AlertTitle, IconButton, Tooltip
+} from '@mui/material';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import CloudOffIcon from '@mui/icons-material/CloudOff';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ErrorIcon from '@mui/icons-material/Error';
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 
 const AgentPage = () => {
     const { agentId } = useParams();
     const { currentUser } = useAuth();
-    // const navigate = useNavigate();
+
 
     const [agent, setAgent] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -23,10 +41,13 @@ const AgentPage = () => {
     const [isDeleting, setIsDeleting] = useState(false);
 
     const fetchAgentData = useCallback(async () => {
-        if (!currentUser) return;
+        if (!currentUser || !agentId) {
+            setLoading(false); // No user or agentId, stop loading
+            return;
+        }
+        setLoading(true); // Set loading true at the start of fetch
+        // setError(null); // Clear previous errors for a fresh fetch, or not if you want to keep them
         try {
-            setLoading(true);
-            setError(null);
             const agentData = await getAgentDetails(agentId);
             if (agentData.userId !== currentUser.uid) {
                 setError("You are not authorized to view this agent.");
@@ -34,9 +55,10 @@ const AgentPage = () => {
                 return;
             }
             setAgent(agentData);
+            setError(null); // Clear error on successful fetch
         } catch (err) {
             console.error("Error fetching agent details:", err);
-            setError("Failed to load agent details. It might have been deleted or an error occurred.");
+            setError(`Failed to load agent details: ${err.message}`);
             setAgent(null);
         } finally {
             setLoading(false);
@@ -52,17 +74,17 @@ const AgentPage = () => {
         setIsDeploying(true);
         setError(null);
         try {
-            // The agent object from Firestore is passed to the Cloud Function
-            await deployAgent(agent, agent.id); // agent.id is the Firestore document ID
+            await deployAgent(agent, agent.id);
+            // Consider using Snackbar for notifications
             alert("Agent deployment initiated! It may take a few minutes. Refresh to see status.");
-            // Update local agent state or re-fetch
-            await updateAgentInFirestore(agent.id, { deploymentStatus: 'deploying' });
-            fetchAgentData(); // Re-fetch to get updated status
+            await updateAgentInFirestore(agent.id, { deploymentStatus: 'deploying', deploymentError: null });
+            fetchAgentData();
         } catch (err) {
             console.error("Error deploying agent:", err);
-            setError(err.message || "Failed to deploy agent. Check console for details.");
-            await updateAgentInFirestore(agent.id, { deploymentStatus: 'error', deploymentError: err.message });
-            fetchAgentData();
+            const deployError = err.message || "Failed to deploy agent. Check console for details.";
+            setError(deployError);
+            await updateAgentInFirestore(agent.id, { deploymentStatus: 'error', deploymentError: deployError });
+            fetchAgentData(); // Re-fetch to show error state correctly
         } finally {
             setIsDeploying(false);
         }
@@ -78,133 +100,183 @@ const AgentPage = () => {
         try {
             await deleteAgentDeployment(agent.vertexAiResourceName, agent.id);
             alert("Agent deployment deletion initiated!");
-            // Update local agent state or re-fetch
             await updateAgentInFirestore(agent.id, {
-                deploymentStatus: 'not_deployed', // Or 'deleted'
-                vertexAiResourceName: null, // Or use firestore.FieldValue.delete() in service
-                deploymentError: null
+                deploymentStatus: 'not_deployed',
+                vertexAiResourceName: null, // Or firestore.FieldValue.delete()
+                deploymentError: null,
+                lastDeployedAt: null, // Or firestore.FieldValue.delete()
             });
-            fetchAgentData(); // Re-fetch
+            fetchAgentData();
         } catch (err) {
             console.error("Error deleting agent deployment:", err);
             setError(err.message || "Failed to delete agent deployment. Check console.");
+            // Optionally update Firestore with delete_error status
         } finally {
             setIsDeleting(false);
         }
     };
 
+    if (loading && !agent) return <Box display="flex" justifyContent="center" py={5}><LoadingSpinner /></Box>;
+    if (error && !agent) return <Container><ErrorMessage message={error} /></Container>; // If agent couldn't be loaded at all
+    if (!agent) return (
+        <Container>
+            <Typography variant="h5" textAlign="center" color="text.secondary" mt={5}>
+                Agent not found or you do not have access.
+            </Typography>
+        </Container>
+    );
 
-    if (loading) return <LoadingSpinner />;
-    if (error) return <ErrorMessage message={error} />;
-    if (!agent) return <p className="text-center text-gray-600">Agent not found or you don't have access.</p>;
 
     const isDeployed = agent.deploymentStatus === 'deployed' && agent.vertexAiResourceName;
     const isDeployingStatus = agent.deploymentStatus === 'deploying';
     const hasDeploymentError = agent.deploymentStatus === 'error';
 
+    const getStatusIconAndColor = () => {
+        switch (agent.deploymentStatus) {
+            case 'deployed': return { icon: <CheckCircleIcon color="success" />, color: 'success.main', text: 'Deployed' };
+            case 'deploying': return { icon: <HourglassEmptyIcon color="warning" className="animate-pulse" />, color: 'warning.main', text: 'Deploying' };
+            case 'error': return { icon: <ErrorIcon color="error" />, color: 'error.main', text: 'Error' };
+            default: return { icon: <CloudOffIcon color="disabled"/>, color: 'text.disabled', text: 'Not Deployed' };
+        }
+    };
+    const statusInfo = getStatusIconAndColor();
+
     return (
-        <div className="space-y-8">
-            <div className="bg-white p-6 rounded-lg shadow">
-                <div className="flex justify-between items-start">
-                    <div>
-                        <h1 className="text-3xl font-bold mb-1">{agent.name}</h1>
-                        <p className="text-sm text-gray-500 mb-3">ID: {agent.id}</p>
-                    </div>
-                    <Link
+        <Container maxWidth="lg" sx={{ py: 3 }}>
+            {error && <ErrorMessage message={error} severity="error" sx={{ mb:2 }} />}
+            <Paper elevation={3} sx={{ p: { xs: 2, md: 3 }, mb: 3 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                    <Box>
+                        <Typography variant="h4" component="h1" gutterBottom>
+                            {agent.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                            ID: {agent.id}
+                        </Typography>
+                    </Box>
+                    <Button
+                        variant="outlined"
+                        color="secondary"
+                        component={RouterLink}
                         to={`/agent/${agent.id}/edit`}
-                        className="bg-yellow-500 hover:bg-yellow-700 text-white font-bold py-2 px-3 rounded text-sm"
+                        startIcon={<EditIcon />}
                     >
-                        Edit Agent Config
-                    </Link>
-                </div>
+                        Edit Config
+                    </Button>
+                </Box>
+                <Divider sx={{ my: 2 }} />
 
-                <p className="text-gray-700 mb-2"><span className="font-semibold">Description:</span> {agent.description || "N/A"}</p>
-                <p className="text-gray-700 mb-2"><span className="font-semibold">Type:</span> {agent.agentType}</p>
-                <p className="text-gray-700 mb-2"><span className="font-semibold">Model:</span> {agent.model}</p>
-                <div className="mb-2">
-                    <p className="font-semibold text-gray-700">Instruction:</p>
-                    <pre className="bg-gray-100 p-3 rounded text-sm whitespace-pre-wrap">{agent.instruction || "N/A"}</pre>
-                </div>
-                <div className="mb-4">
-                    <p className="font-semibold text-gray-700">Tools:</p>
-                    {agent.tools && agent.tools.length > 0 ? (
-                        <ul className="list-disc list-inside pl-4 text-sm">
-                            {agent.tools.map(tool => <li key={tool.id}>{tool.name} ({tool.id})</li>)}
-                        </ul>
-                    ) : (
-                        <p className="text-sm text-gray-500">No tools configured.</p>
-                    )}
-                </div>
+                <Grid container spacing={2}>
+                    <Grid item xs={12} md={6}>
+                        <Typography variant="subtitle1" fontWeight="medium">Description:</Typography>
+                        <Typography variant="body2" color="text.secondary" paragraph>{agent.description || "N/A"}</Typography>
 
-                <div className="mt-4 pt-4 border-t">
-                    <h2 className="text-xl font-semibold mb-2">Deployment Status</h2>
-                    <p className="mb-1">
-                        Status: <span className={`font-bold ${
-                        agent.deploymentStatus === 'deployed' ? 'text-green-600' :
-                            agent.deploymentStatus === 'deploying' ? 'text-yellow-600 animate-pulse' :
-                                agent.deploymentStatus === 'error' ? 'text-red-600' :
-                                    'text-gray-600'
-                    }`}>
-                    {agent.deploymentStatus ? agent.deploymentStatus.replace('_', ' ') : 'Not Deployed'}
-                </span>
-                    </p>
+                        <Typography variant="subtitle1" fontWeight="medium">Type:</Typography>
+                        <Typography variant="body2" color="text.secondary" paragraph>{agent.agentType}</Typography>
+
+                        <Typography variant="subtitle1" fontWeight="medium">Model:</Typography>
+                        <Typography variant="body2" color="text.secondary" paragraph>{agent.model}</Typography>
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                        <Typography variant="subtitle1" fontWeight="medium">Instruction:</Typography>
+                        <Paper variant="outlined" sx={{ p: 1.5, my: 1, whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', bgcolor:'action.hover' }}>
+                            {agent.instruction || "N/A"}
+                        </Paper>
+
+                        <Typography variant="subtitle1" fontWeight="medium" sx={{mt:1.5}}>Tools:</Typography>
+                        {agent.tools && agent.tools.length > 0 ? (
+                            <List dense disablePadding>
+                                {agent.tools.map(tool => (
+                                    <ListItem key={tool.id} disableGutters sx={{py:0.5}}>
+                                        <ListItemText primary={tool.name} secondary={tool.id} primaryTypographyProps={{variant:'body2'}} secondaryTypographyProps={{variant:'caption'}} />
+                                    </ListItem>
+                                ))}
+                            </List>
+                        ) : (
+                            <Typography variant="body2" color="text.secondary">No tools configured.</Typography>
+                        )}
+                    </Grid>
+                </Grid>
+
+                <Divider sx={{ my: 3 }} />
+                <Box>
+                    <Box sx={{display: 'flex', alignItems: 'center', justifyContent:'space-between', mb:1}}>
+                        <Typography variant="h6" component="h3">
+                            Deployment Status
+                        </Typography>
+                        <Tooltip title="Refresh Status">
+                            <IconButton onClick={fetchAgentData} size="small" disabled={loading}>
+                                {loading ? <CircularProgress size={20}/> :<RefreshIcon />}
+                            </IconButton>
+                        </Tooltip>
+                    </Box>
+
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                        {statusInfo.icon}
+                        <Typography variant="body1" fontWeight="medium" color={statusInfo.color}>
+                            {statusInfo.text}
+                        </Typography>
+                    </Box>
+
                     {agent.vertexAiResourceName && (
-                        <p className="text-sm text-gray-600 mb-2">Resource Name: {agent.vertexAiResourceName}</p>
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{mb:1}}>
+                            Resource Name: {agent.vertexAiResourceName}
+                        </Typography>
+                    )}
+                    {agent.lastDeployedAt?.toDate && (
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{mb:1}}>
+                            Last Deployed: {new Date(agent.lastDeployedAt.toDate()).toLocaleString()}
+                        </Typography>
                     )}
                     {hasDeploymentError && agent.deploymentError && (
-                        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-3 rounded mb-3 text-sm">
-                            <p className="font-bold">Deployment Error:</p>
-                            <p>{agent.deploymentError}</p>
-                        </div>
+                        <Alert severity="error" sx={{my:1}}>
+                            <AlertTitle>Deployment Error</AlertTitle>
+                            {agent.deploymentError}
+                        </Alert>
                     )}
 
-                    <div className="flex space-x-3">
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} mt={2}>
                         {!isDeployed && !isDeployingStatus && (
-                            <button
+                            <Button
+                                variant="contained"
+                                color={hasDeploymentError ? "warning" : "success"}
                                 onClick={handleDeploy}
-                                disabled={isDeploying}
-                                className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded disabled:opacity-50"
+                                disabled={isDeploying || loading}
+                                startIcon={isDeploying ? <CircularProgress size={20} color="inherit" /> : <CloudUploadIcon />}
                             >
                                 {isDeploying ? 'Deploying...' : (hasDeploymentError ? 'Retry Deployment' : 'Deploy to Vertex AI')}
-                            </button>
+                            </Button>
                         )}
                         {isDeployed && (
-                            <button
+                            <Button
+                                variant="contained"
+                                color="error"
                                 onClick={handleDeleteDeployment}
-                                disabled={isDeleting}
-                                className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded disabled:opacity-50"
+                                disabled={isDeleting || loading}
+                                startIcon={isDeleting ? <CircularProgress size={20} color="inherit" /> : <DeleteForeverIcon />}
                             >
                                 {isDeleting ? 'Deleting...' : 'Delete Vertex AI Deployment'}
-                            </button>
+                            </Button>
                         )}
-                        <button
-                            onClick={fetchAgentData} // Simple refresh
-                            className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded"
-                        >
-                            Refresh Status
-                        </button>
-                    </div>
-                </div>
-            </div>
+                    </Stack>
+                </Box>
+            </Paper>
 
-            {isDeployed && agent.vertexAiResourceName && (
+            {isDeployed && agent.vertexAiResourceName && currentUser && (
                 <AgentRunner
                     agentResourceName={agent.vertexAiResourceName}
                     agentFirestoreId={agent.id}
-                    adkUserId={currentUser.uid} // Or some other stable user ID for ADK sessions
+                    adkUserId={currentUser.uid}
                 />
             )}
-            {isDeployingStatus && (
-                <div className="bg-yellow-100 text-yellow-700 p-4 rounded-lg shadow text-center">
-                    <p className="font-semibold">Deployment in progress...</p>
-                    <p className="text-sm">This can take several minutes. You can refresh the status or come back later.</p>
-                    <LoadingSpinner />
-                </div>
+            {isDeployingStatus && !isDeploying && ( // Show if status is deploying but not actively clicking deploy
+                <Alert severity="info" icon={<HourglassEmptyIcon className="animate-pulse"/>} sx={{mt:2}}>
+                    Deployment is in progress. This can take several minutes. You can refresh the status using the button above.
+                </Alert>
             )}
 
-
             <RunHistory agentId={agent.id} />
-        </div>
+        </Container>
     );
 };
 

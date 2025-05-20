@@ -1,41 +1,49 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import AgentForm from '../components/agents/AgentForm';
+import AgentForm from '../components/agents/AgentForm'; // Already MUI-fied
 import { useAuth } from '../contexts/AuthContext';
 import { createAgentInFirestore, getAgentDetails, updateAgentInFirestore } from '../services/firebaseService';
-import LoadingSpinner from '../components/common/LoadingSpinner';
-import ErrorMessage from '../components/common/ErrorMessage';
+import LoadingSpinner from '../components/common/LoadingSpinner'; // Already MUI-fied
+import ErrorMessage from '../components/common/ErrorMessage'; // Already MUI-fied
+
+import { Container, Typography, Box } from '@mui/material'; // Added Alert
+// import { useSnackbar } from 'notistack'; // For better notifications (optional, needs setup)
 
 const CreateAgentPage = ({ isEditMode = false }) => {
     const navigate = useNavigate();
     const { currentUser } = useAuth();
-    const { agentId } = useParams(); // For edit mode
+    const { agentId } = useParams();
 
     const [initialAgentData, setInitialAgentData] = useState(null);
-    const [loading, setLoading] = useState(isEditMode); // Only load if in edit mode
+    const [loading, setLoading] = useState(isEditMode);
     const [error, setError] = useState(null);
+    const [isSubmitting, setIsSubmitting] = useState(false); // Separate state for form submission
+
+    // const { enqueueSnackbar } = useSnackbar(); // Optional: for nicer notifications
 
     useEffect(() => {
-        if (isEditMode && agentId) {
+        if (isEditMode && agentId && currentUser) { // Added currentUser check for early exit
             const fetchAgent = async () => {
+                setLoading(true);
+                setError(null);
                 try {
-                    setLoading(true);
-                    setError(null);
                     const agent = await getAgentDetails(agentId);
                     if (agent.userId !== currentUser.uid) {
                         setError("You are not authorized to edit this agent.");
-                        setInitialAgentData(null); // Prevent form rendering
+                        setInitialAgentData(null);
                         return;
                     }
                     setInitialAgentData(agent);
                 } catch (err) {
                     console.error("Error fetching agent for edit:", err);
-                    setError("Failed to load agent details.");
+                    setError(`Failed to load agent details: ${err.message}`);
                 } finally {
                     setLoading(false);
                 }
             };
             fetchAgent();
+        } else if (!isEditMode) {
+            setLoading(false); // Not edit mode, no initial loading needed for data
         }
     }, [isEditMode, agentId, currentUser]);
 
@@ -43,48 +51,60 @@ const CreateAgentPage = ({ isEditMode = false }) => {
     const handleSaveAgent = async (agentData) => {
         if (!currentUser) {
             setError("You must be logged in to save an agent.");
+            // enqueueSnackbar("You must be logged in.", { variant: 'error' });
             return;
         }
+        setIsSubmitting(true);
+        setError(null);
         try {
-            setLoading(true);
-            setError(null);
             let newAgentId;
             if (isEditMode && agentId) {
                 await updateAgentInFirestore(agentId, agentData);
                 newAgentId = agentId;
-                alert("Agent updated successfully!");
+                // enqueueSnackbar("Agent updated successfully!", { variant: 'success' });
+                alert("Agent updated successfully!"); // Simple alert
             } else {
                 newAgentId = await createAgentInFirestore(currentUser.uid, agentData);
-                alert("Agent created successfully!");
+                // enqueueSnackbar("Agent created successfully!", { variant: 'success' });
+                alert("Agent created successfully!"); // Simple alert
             }
             navigate(`/agent/${newAgentId}`);
         } catch (err) {
             console.error("Error saving agent:", err);
-            setError(`Failed to ${isEditMode ? 'update' : 'create'} agent. Please try again.`);
+            const errorMessage = `Failed to ${isEditMode ? 'update' : 'create'} agent. ${err.message || 'Please try again.'}`;
+            setError(errorMessage);
+            // enqueueSnackbar(errorMessage, { variant: 'error' });
         } finally {
-            setLoading(false);
+            setIsSubmitting(false);
         }
     };
 
-    if (loading && isEditMode) return <LoadingSpinner />; // Only show loading spinner when fetching for edit
-    if (error) return <ErrorMessage message={error} />;
-    // If in edit mode and data couldn't be loaded (and no error explicitly set to stop rendering),
-    // we might not want to render the form or show a specific message.
-    if (isEditMode && !initialAgentData && !error) return <p>Loading agent data or agent not found...</p>;
+    if (loading) return <Box display="flex" justifyContent="center" py={5}><LoadingSpinner /></Box>;
 
+    // If error and no data to show form for edit mode, display error prominently.
+    if (error && (isEditMode && !initialAgentData)) return <Container><ErrorMessage message={error} /></Container>;
+
+    // For edit mode, ensure initialAgentData is loaded before rendering form, unless there was an auth error
+    if (isEditMode && !initialAgentData && !error) { // Still loading or not found, but not an explicit error yet
+        return <Box display="flex" justifyContent="center" py={5}><Typography>Loading agent data or agent not found...</Typography></Box>;
+    }
 
     return (
-        <div>
-            <h1 className="text-3xl font-bold mb-6">{isEditMode ? 'Edit Agent' : 'Create New Agent'}</h1>
-            { (isEditMode && initialAgentData) || !isEditMode ? (
+        <Container maxWidth="md">
+            <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 3 }}>
+                {isEditMode ? 'Edit Agent' : 'Create New Agent'}
+            </Typography>
+            {error && !isSubmitting && <ErrorMessage message={error} sx={{ mb: 2 }} />} {/* Show general page errors if not submitting */}
+
+            {/* Render form if not in edit mode OR if in edit mode and data is loaded */}
+            {(!isEditMode || (isEditMode && initialAgentData)) && (
                 <AgentForm
                     onSubmit={handleSaveAgent}
                     initialData={isEditMode ? initialAgentData : {}}
-                    isSaving={loading && !isEditMode} // isSaving is true if creating and loading
+                    isSaving={isSubmitting}
                 />
-            ) : null // Or some other placeholder/error message
-            }
-        </div>
+            )}
+        </Container>
     );
 };
 

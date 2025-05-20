@@ -7,10 +7,11 @@ import traceback # For full traceback
 import functools # For decorator wrapping
 
 from firebase_functions import https_fn, options, logger
-from firebase_admin import initialize_app, firestore
+import firebase_admin
+from firebase_admin import firestore
 
 # Initialize Firebase Admin SDK
-initialize_app()
+firebase_admin.initialize_app()
 db = firestore.client() # Initialize Firestore client globally or per function as needed
 
 
@@ -61,16 +62,31 @@ def handle_exceptions_and_log(func):
 
 # --- Helper Functions (Internal Logic) ---
 def _get_gcp_project_config():
-    project_id = os.environ.get("GCP_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT")
-    location = "us-central1" # Make configurable if needed
+    project_id = None
+    try:
+        # Best way in a Firebase/GCP environment after firebase_admin.initialize_app()
+        project_id = firebase_admin.get_app().project_id
+        if project_id:
+            logger.info(f"Retrieved project ID from firebase_admin: {project_id}")
+    except Exception as e:
+        logger.warning(f"Could not get project ID from firebase_admin.get_app().project_id: {e}. Falling back to environment variables.")
+
     if not project_id:
-        logger.error("GCP Project ID not found in environment variables.")
-        raise ValueError("GCP Project ID not found.")
+        project_id = os.environ.get("GCP_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT")
+        if project_id:
+            logger.info(f"Retrieved project ID from environment variables: {project_id}")
+
+    location = "us-central1" # Make configurable if needed
+
+    if not project_id:
+        logger.error("GCP Project ID could not be determined from firebase_admin or environment variables (GCP_PROJECT, GOOGLE_CLOUD_PROJECT).")
+        raise ValueError("GCP Project ID not found. Ensure the function is running in a properly configured GCP environment or the environment variables are set.")
+
     staging_bucket_name = f"{project_id}-adk-staging"
     staging_bucket = f"gs://{staging_bucket_name}"
     logger.info(f"Using Project ID: {project_id}, Location: {location}, Staging Bucket: {staging_bucket}")
-    # You might want to check if the bucket exists or ensure it's created,
-    # though vertexai.init can sometimes create it.
+    # Ensure this bucket exists or that the service account has permissions to create it if vertexai.init() does that.
+    # Typically, it's better to pre-create this bucket with appropriate permissions.
     return project_id, location, staging_bucket
 
 def _initialize_vertex_ai():

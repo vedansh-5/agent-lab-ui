@@ -1,38 +1,105 @@
 import React from 'react';
-import UserProfile from '../components/auth/UserProfile'; // Assuming you might want this here
+import UserProfile from '../components/auth/UserProfile'; // Already MUI-fied
+import { useThemeSwitcher, availableThemes } from '../contexts/ThemeContext';
+
+import { Container,
+    Typography,
+    Box,
+    Paper,
+    Grid,
+    Select,
+    MenuItem,
+    FormControl,
+    InputLabel } from '@mui/material';
+import { useTheme } from '@mui/material/styles'; // To get current theme for display
+
 
 const SettingsPage = () => {
-    return (
-        <div>
-            <h1 className="text-3xl font-bold mb-6">Settings</h1>
-            <UserProfile />
-            <div className="mt-6 bg-white p-6 rounded-lg shadow">
-                <h2 className="text-xl font-semibold mb-3">Application Preferences</h2>
-                <p className="text-gray-600">
-                    User-specific settings and key management will be available here in the future.
-                </p>
-                {/* Example:
-        <div className="mt-4">
-          <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700">Your External API Key:</label>
-          <input type="password" id="apiKey" className="mt-1 block w-full md:w-1/2 px-3 py-2 border border-gray-300 rounded-md shadow-sm" placeholder="Enter your key"/>
-          <button className="mt-2 py-2 px-3 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">Save Key</button>
-        </div>
-        */}
-            </div>
+    const { selectTheme, currentThemeKey } = useThemeSwitcher();
+    const muiTheme = useTheme(); // To access current theme properties like customBranding
 
-            <div className="mt-6 bg-white p-6 rounded-lg shadow">
-                <h2 className="text-xl font-semibold mb-3">Agent Sharing (Future)</h2>
-                <p className="text-gray-600">
-                    Control how your agents can be accessed:
-                </p>
-                <ul className="list-disc list-inside text-gray-600 pl-4 mt-2">
-                    <li><strong>Private:</strong> Only you can access.</li>
-                    <li><strong>Semi-Private:</strong> Share with specific users (they use your keys).</li>
-                    <li><strong>Public:</strong> Anyone with the link (they bring their own keys).</li>
-                </ul>
-                <p className="text-sm text-gray-500 mt-3">This feature is planned for a future update.</p>
-            </div>
-        </div>
+    const handleThemeChange = (event) => {
+        selectTheme(event.target.value);
+    };
+
+    return (
+        <Container maxWidth="md">
+            <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 3 }}>
+                Settings
+            </Typography>
+
+            <Grid container spacing={3}>
+                <Grid item xs={12}>
+                    <UserProfile />
+                </Grid>
+
+                <Grid item xs={12}>
+                    <Paper elevation={3} sx={{ p: 3 }}>
+                        <Typography variant="h6" component="h3" gutterBottom>
+                            Appearance
+                        </Typography>
+                        <FormControl fullWidth margin="normal">
+                            <InputLabel id="theme-select-label">Select Theme</InputLabel>
+                            <Select
+                                labelId="theme-select-label"
+                                id="theme-select"
+                                value={currentThemeKey}
+                                label="Select Theme"
+                                onChange={handleThemeChange}
+                            >
+                                {Object.keys(availableThemes).map(key => (
+                                    <MenuItem key={key} value={key}>
+                                        {key.charAt(0).toUpperCase() + key.slice(1)}
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
+                        {muiTheme.customBranding?.logoUrl && (
+                            <Box mt={2}>
+                                <Typography variant="caption">Current Theme Logo (Example):</Typography>
+                                <img src={muiTheme.customBranding.logoUrl} alt="Theme Logo" style={{maxWidth: '150px', maxHeight: '50px', display:'block', marginTop: '4px', filter: muiTheme.palette.mode === 'dark' ? 'invert(1)':'none' }}/>
+                            </Box>
+                        )}
+                    </Paper>
+                </Grid>
+
+                <Grid item xs={12}>
+                    <Paper elevation={3} sx={{ p: 3 }}>
+                        <Typography variant="h6" component="h3" gutterBottom>
+                            Application Preferences (Future)
+                        </Typography>
+                        <Typography color="text.secondary">
+                            User-specific settings and key management will be available here.
+                        </Typography>
+                        {/* Example structure for a future setting
+                        <FormControl fullWidth margin="normal">
+                            <TextField label="External API Key" type="password" variant="outlined" />
+                            <Button variant="contained" sx={{mt:1, alignSelf: 'flex-start'}}>Save Key</Button>
+                        </FormControl>
+                        */}
+                    </Paper>
+                </Grid>
+
+                <Grid item xs={12}>
+                    <Paper elevation={3} sx={{ p: 3 }}>
+                        <Typography variant="h6" component="h3" gutterBottom>
+                            Agent Sharing (Future)
+                        </Typography>
+                        <Typography color="text.secondary" paragraph>
+                            Control how your agents can be accessed:
+                        </Typography>
+                        <Box component="ul" sx={{ pl: 2, listStyle: 'disc', color: 'text.secondary' }}>
+                            <Typography component="li"><strong>Private:</strong> Only you can access.</Typography>
+                            <Typography component="li"><strong>Semi-Private:</strong> Share with specific users.</Typography>
+                            <Typography component="li"><strong>Public:</strong> Anyone with the link (BYOK).</Typography>
+                        </Box>
+                        <Typography variant="caption" display="block" sx={{mt:2}}>
+                            This feature is planned for a future update.
+                        </Typography>
+                    </Paper>
+                </Grid>
+            </Grid>
+        </Container>
     );
 };
 

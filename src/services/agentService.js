@@ -29,9 +29,16 @@ export const deployAgent = async (agentConfig, agentDocId) => {
 
 export const queryAgent = async (resourceName, message, userId, sessionId, agentDocId) => {
     try {
-        // userId for ADK session, sessionId is optional (can be managed by ADK)
-        const result = await queryDeployedAgentCallable({ resourceName, message, userId, sessionId, agentDocId });
-        return result.data; // { success: true, events: [...], responseText: "...", sessionId: "..." }
+        // The 'userId' parameter here actually holds the ADK User ID from the component.
+        // The key in the payload to the Cloud Function must be 'adkUserId'.
+        const result = await queryDeployedAgentCallable({
+            resourceName,
+            message,
+            adkUserId: userId, // Corrected: key is 'adkUserId', value is from the 'userId' parameter
+            sessionId,
+            agentDocId
+        });
+        return result.data;
     } catch (error) {
         console.error("Error querying agent:", error);
         throw error;

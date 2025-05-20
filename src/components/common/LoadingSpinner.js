@@ -1,13 +1,13 @@
 import React from 'react';
+import CircularProgress from '@mui/material/CircularProgress';
+import Box from '@mui/material/Box';
 
-const LoadingSpinner = ({ small = false }) => {
-    const sizeClass = small ? 'h-5 w-5' : 'h-12 w-12';
+const LoadingSpinner = ({ small = false, sx }) => {
+    const size = small ? 20 : 40;
     return (
-        <div className={`flex justify-center items-center ${small ? '' : 'py-10'}`}>
-            <div
-                className={`animate-spin rounded-full ${sizeClass} border-t-2 border-b-2 border-blue-500`}
-            ></div>
-        </div>
+        <Box display="flex" justifyContent="center" alignItems="center" sx={{ py: small ? 0 : 2, ...sx }}>
+            <CircularProgress size={size} />
+        </Box>
     );
 };
 
