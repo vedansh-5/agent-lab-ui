@@ -9,9 +9,11 @@ import {
 
 const AGENT_TYPES = ["Agent", "SequentialAgent", "LoopAgent", "ParallelAgent"];
 const GEMINI_MODELS = [
-    "gemini-1.5-flash-001",
-    "gemini-1.5-pro-001",
-    "gemini-1.0-pro",
+    "gemini-2.5-pro-preview-05-06",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+
 ];
 
 const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
