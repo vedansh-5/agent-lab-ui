@@ -5,6 +5,8 @@ import requests
 import traceback # For full traceback
 import asyncio # For running async code within sync function
 import re # Added for display_name sanitization
+from google.cloud.aiplatform_v1beta1 import ReasoningEngineServiceClient
+from google.cloud.aiplatform_v1beta1.types import ReasoningEngine as ReasoningEngineProto
 
 import functools # For decorator wrapping
 
@@ -53,6 +55,58 @@ def handle_exceptions_and_log(func):
     return wrapper
 
 # --- Helper Functions (Internal Logic) ---
+
+def _generate_vertex_deployment_display_name(agent_config_name: str, agent_doc_id: str) -> str:
+    # Vertex AI display name rules: (a-z, 0-9, -), start with letter, 4-63 chars
+    base_name = agent_config_name or f"adk-agent-{agent_doc_id}"
+
+    # Sanitize: lowercase, replace invalid chars with hyphen, strip leading/trailing hyphens
+    processed_name = re.sub(r'[^a-z0-9-]+', '-', base_name.lower()).strip('-')
+
+    # Fallback if processed_name is empty (e.g., original name was all invalid chars)
+    if not processed_name:
+        processed_name = f"agent-{agent_doc_id[:8].lower()}" # Use part of doc_id
+
+    # Ensure starts with a letter
+    if not processed_name[0].isalpha():
+        processed_name = f"a-{processed_name}" # Prepend 'a-'
+
+    # Enforce length constraints
+    processed_name = processed_name[:63] # Max length 63
+
+    # Ensure minimum length of 4, padding with 'x' if necessary
+    # This padding should happen *after* potential truncation by prepending 'a-'
+    # and before the final truncation, so we ensure it's not too short.
+    # Re-evaluate order:
+    # 1. Sanitize and lowercase: `processed_name = re.sub(r'[^a-z0-9-]+', '-', base_name.lower()).strip('-')`
+    # 2. Fallback: `if not processed_name: processed_name = f"agent-{agent_doc_id[:8].lower()}"`
+    # 3. Ensure starts with letter: `if not processed_name[0].isalpha(): processed_name = f"a-{processed_name}"` (this could make it too long)
+    # 4. Truncate to max length: `processed_name = processed_name[:63]`
+    # 5. Ensure min length: `while len(processed_name) < 4: processed_name += "x"` (this could make it too long again if it was short before)
+    # 6. Final truncate: `processed_name = processed_name.strip('-')[:63]` (strip just in case 'a-' or padding caused issues)
+
+    # Simpler robust approach for display name:
+    sanitized_base = re.sub(r'[^a-z0-9-]+', '-', (agent_config_name or f"agent-{agent_doc_id}").lower()).strip('-')
+    if not sanitized_base: # Highly unlikely if agent_doc_id is used
+        sanitized_base = f"agent-{agent_doc_id[:8]}" # Default if everything else fails
+
+    # Prefix with 'a-' if doesn't start with a letter or too short
+    if not sanitized_base[0].isalpha() or len(sanitized_base) < 4:
+        # Ensure prefix doesn't make it too generic if base is already long
+        core_name = sanitized_base[:58] # Leave space for 'a-' and potential padding
+        deployment_display_name = f"a-{core_name}"
+    else:
+        deployment_display_name = sanitized_base
+
+        # Trim to 63 chars
+    deployment_display_name = deployment_display_name[:63]
+
+    # Pad to 4 chars if needed
+    while len(deployment_display_name) < 4:
+        deployment_display_name += "x"
+
+    return deployment_display_name.strip('-') # Final cleanup
+
 def _get_gcp_project_config():
     project_id = None
     try:
@@ -154,140 +208,6 @@ def get_gofannon_tool_manifest(req: https_fn.CallableRequest):
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching Gofannon manifest from URL: {e}")
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAVAILABLE, message=f"Could not fetch tool manifest: {e}")
-
-@https_fn.on_call(memory=options.MemoryOption.GB_1, timeout_sec=540)
-@handle_exceptions_and_log
-def deploy_agent_to_vertex(req: https_fn.CallableRequest):
-    if not req.auth: raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required.")
-    agent_config_data, agent_doc_id = req.data.get("agentConfig"), req.data.get("agentDocId")
-    if not agent_config_data or not agent_doc_id: raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="Agent config and agentDocId are required.")
-
-    logger.info(f"Deploying agent {agent_doc_id} with config: {json.dumps(agent_config_data, indent=2)}")
-    _initialize_vertex_ai()
-    from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent
-    from vertexai import agent_engines as deployed_agent_engines
-
-    try:
-        agent_type_str = agent_config_data.get("agentType")
-        AgentClass = {
-            "Agent": Agent,
-            "SequentialAgent": SequentialAgent,
-            "LoopAgent": LoopAgent,
-            "ParallelAgent": ParallelAgent
-        }.get(agent_type_str)
-
-        if not AgentClass:
-            logger.error(f"Invalid agentType specified: {agent_type_str}")
-            raise https_fn.HttpsError(
-                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-                message=f"Invalid agentType: {agent_type_str}."
-            )
-
-        parent_agent_name_str = agent_config_data.get("name", f"agent_{agent_doc_id}")
-        parent_adk_name = _sanitize_adk_agent_name(parent_agent_name_str, prefix_if_needed=f"parent_{agent_doc_id}_")
-
-        agent_description = agent_config_data.get("description")
-
-        common_args_for_parent = {
-            "name": parent_adk_name,
-            "description": agent_description
-        }
-        adk_agent = None
-
-        instantiated_parent_tools = [_instantiate_tool(tc) for tc in agent_config_data.get("tools", [])]
-
-        if AgentClass == Agent:
-            adk_agent = Agent(
-                **common_args_for_parent,
-                model=agent_config_data.get("model", "gemini-1.5-flash-001"),
-                instruction=agent_config_data.get("instruction"),
-                tools=instantiated_parent_tools
-            )
-        elif AgentClass == SequentialAgent or AgentClass == ParallelAgent:
-            child_agent_configs = agent_config_data.get("childAgents", [])
-            instantiated_child_agents = []
-            if child_agent_configs:
-                logger.info(f"Instantiating {len(child_agent_configs)} child agents for {agent_type_str} '{parent_adk_name}'.")
-                for child_idx, child_config in enumerate(child_agent_configs):
-                    instantiated_child_agents.append(
-                        _instantiate_adk_agent_from_config(child_config, parent_adk_name, child_idx)
-                    )
-            else:
-                logger.warning(f"No child agents provided for {agent_type_str} '{parent_adk_name}'. ADK might require child agents for these types to be functional.")
-
-                # ** CRITICAL FIX: Use sub_agents keyword argument in the constructor **
-            adk_agent = AgentClass(**common_args_for_parent, sub_agents=instantiated_child_agents)
-            # No longer needed: adk_agent.agents = instantiated_child_agents
-
-            logger.info(f"{agent_type_str} '{parent_adk_name}' created with {len(instantiated_child_agents)} sub_agents.")
-
-        elif AgentClass == LoopAgent:
-            loop_child_agent_name_str = f"{parent_adk_name}_looped_child"
-            loop_child_adk_name = _sanitize_adk_agent_name(loop_child_agent_name_str, prefix_if_needed="looped_")
-
-            looped_child_agent = Agent(
-                name=loop_child_adk_name,
-                model=agent_config_data.get("model", "gemini-1.5-flash-001"),
-                instruction=agent_config_data.get("instruction"),
-                tools=instantiated_parent_tools
-            )
-            max_loops = int(agent_config_data.get("maxLoops", 3))
-            adk_agent = LoopAgent(
-                **common_args_for_parent,
-                agent=looped_child_agent, # LoopAgent expects 'agent' not 'sub_agents'
-                max_loops=max_loops
-            )
-            logger.info(f"LoopAgent '{parent_adk_name}' created with max_loops={max_loops}.")
-
-        if adk_agent is None:
-            raise ValueError("ADK Agent object could not be constructed.")
-
-        logger.info(f"ADK Agent object prepared: {adk_agent.name} of type {AgentClass.__name__}")
-
-        requirements = ["google-cloud-aiplatform[adk,agent_engines]>=1.93.0", "gofannon"]
-
-        base_display_name_for_deployment = agent_config_data.get("name", f"adk-agent-{agent_doc_id}")
-        processed_name = re.sub(r'[^a-z0-9-]+', '-', base_display_name_for_deployment.lower()).strip('-')
-
-        if not processed_name:
-            processed_name = f"agent-{agent_doc_id[:8].lower()}"
-        if not processed_name[0].isalpha():
-            processed_name = f"agent-{processed_name}"
-        deployment_display_name = processed_name.strip('-')[:60]
-
-        if len(deployment_display_name) < 4:
-            unique_suffix = re.sub(r'[^a-z0-9]', '', agent_doc_id.lower())[:10]
-            current_prefix = deployment_display_name[:min(3, len(deployment_display_name))]
-            deployment_display_name = f"{current_prefix}{unique_suffix}"
-            if not deployment_display_name[0].isalpha(): deployment_display_name = f"a{deployment_display_name}"
-            deployment_display_name = deployment_display_name.strip('-')[:60]
-            while len(deployment_display_name) < 4 and len(deployment_display_name) <= 60 : deployment_display_name += "x"
-            deployment_display_name = deployment_display_name[:60]
-
-        if not deployment_display_name: deployment_display_name = f"agent-{agent_doc_id[:8].lower()}"
-        if not deployment_display_name[0].isalpha(): deployment_display_name = f"a{deployment_display_name[:59]}"
-        deployment_display_name = deployment_display_name[:60]
-
-        logger.info(f"Attempting to deploy with display_name: '{deployment_display_name}' (ADK object name: '{adk_agent.name}')")
-
-        remote_app = deployed_agent_engines.create(
-            agent_engine=adk_agent, requirements=requirements, display_name=deployment_display_name,
-            description=agent_config_data.get("description", f"Agent: {deployment_display_name}")
-        )
-        logger.info(f"Agent deployment initiated for {agent_doc_id}. Resource name: {remote_app.resource_name}")
-        db.collection("agents").document(agent_doc_id).update({
-            "vertexAiResourceName": remote_app.resource_name, "deploymentStatus": "deployed",
-            "lastDeployedAt": firestore.SERVER_TIMESTAMP, "deploymentError": firestore.DELETE_FIELD
-        })
-        return {"success": True, "resourceName": remote_app.resource_name, "message": "Agent deployment initiated."}
-    except Exception as e:
-        logger.error(f"Error during agent deployment for {agent_doc_id}: {e}\n{traceback.format_exc()}")
-        db.collection("agents").document(agent_doc_id).update({"deploymentStatus": "error", "deploymentError": str(e), "lastDeployedAt": firestore.SERVER_TIMESTAMP})
-        if not isinstance(e, https_fn.HttpsError):
-            if "validation error" in str(e).lower() and "pydantic" in str(e).lower():
-                raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message=f"Agent configuration validation failed: {str(e)[:300]}. Check agent names and other parameters.")
-            raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=f"Deployment failed: {str(e)[:300]}")
-        raise
 
 @https_fn.on_call()
 @handle_exceptions_and_log
@@ -440,3 +360,258 @@ def query_deployed_agent(req: https_fn.CallableRequest):
         if "NotFound" in str(e) and (f"projects/{project_id}/locations/{location}/reasoningEngines/{resource_name}" in str(e).lower() or f"deployedagent \"{resource_name}\" not found" in str(e).lower() or f"reasoning engine {resource_name} not found" in str(e).lower()):
             raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.NOT_FOUND, message=f"Agent resource {resource_name} not found or not ready.")
         raise
+
+@https_fn.on_call(memory=options.MemoryOption.GB_1, timeout_sec=540)
+@handle_exceptions_and_log
+def deploy_agent_to_vertex(req: https_fn.CallableRequest):
+    if not req.auth: raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required.")
+    agent_config_data, agent_doc_id = req.data.get("agentConfig"), req.data.get("agentDocId")
+    if not agent_config_data or not agent_doc_id: raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="Agent config and agentDocId are required.")
+
+    logger.info(f"Initiating deployment for agent {agent_doc_id}. Config: {json.dumps(agent_config_data, indent=2)}")
+
+    try:
+        db.collection("agents").document(agent_doc_id).update({
+            "deploymentStatus": "deploying_initiated",
+            "lastDeploymentAttemptAt": firestore.SERVER_TIMESTAMP,
+            "vertexAiResourceName": firestore.DELETE_FIELD,
+            "deploymentError": firestore.DELETE_FIELD,
+            "lastDeployedAt": firestore.DELETE_FIELD # Clear old deployment success time
+        })
+        logger.info(f"Agent {agent_doc_id} status set to 'deploying_initiated'.")
+    except Exception as e:
+        logger.error(f"Critical: Failed to update agent {agent_doc_id} status to 'deploying_initiated' before deployment attempt: {e}")
+        # Don't necessarily stop, but this is a bad state. Log it prominently.
+
+    _initialize_vertex_ai()
+    from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent
+    from vertexai import agent_engines as deployed_agent_engines
+
+    try:
+        # ... (AgentClass determination and adk_agent instantiation as before)
+        agent_type_str = agent_config_data.get("agentType")
+        AgentClass = {
+            "Agent": Agent, "SequentialAgent": SequentialAgent,
+            "LoopAgent": LoopAgent, "ParallelAgent": ParallelAgent
+        }.get(agent_type_str)
+
+        if not AgentClass:
+            logger.error(f"Invalid agentType specified: {agent_type_str}")
+            db.collection("agents").document(agent_doc_id).update({
+                "deploymentStatus": "error", "deploymentError": f"Invalid agentType: {agent_type_str}",
+                "lastDeployedAt": firestore.SERVER_TIMESTAMP
+            })
+            raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message=f"Invalid agentType: {agent_type_str}.")
+
+        parent_agent_name_str = agent_config_data.get("name", f"agent_{agent_doc_id}")
+        parent_adk_name = _sanitize_adk_agent_name(parent_agent_name_str, prefix_if_needed=f"parent_{agent_doc_id}_")
+        agent_description = agent_config_data.get("description")
+        common_args_for_parent = {"name": parent_adk_name, "description": agent_description}
+        adk_agent = None
+        instantiated_parent_tools = [_instantiate_tool(tc) for tc in agent_config_data.get("tools", [])]
+
+        if AgentClass == Agent:
+            adk_agent = Agent(
+                **common_args_for_parent, model=agent_config_data.get("model", "gemini-1.5-flash-001"),
+                instruction=agent_config_data.get("instruction"), tools=instantiated_parent_tools
+            )
+        elif AgentClass == SequentialAgent or AgentClass == ParallelAgent:
+            child_agent_configs = agent_config_data.get("childAgents", [])
+            instantiated_child_agents = [
+                _instantiate_adk_agent_from_config(child_config, parent_adk_name, child_idx)
+                for child_idx, child_config in enumerate(child_agent_configs)
+            ]
+            adk_agent = AgentClass(**common_args_for_parent, sub_agents=instantiated_child_agents)
+        elif AgentClass == LoopAgent:
+            loop_child_adk_name = _sanitize_adk_agent_name(f"{parent_adk_name}_looped_child", prefix_if_needed="looped_")
+            looped_child_agent = Agent(
+                name=loop_child_adk_name, model=agent_config_data.get("model", "gemini-1.5-flash-001"),
+                instruction=agent_config_data.get("instruction"), tools=instantiated_parent_tools
+            )
+            max_loops = int(agent_config_data.get("maxLoops", 3))
+            adk_agent = LoopAgent(**common_args_for_parent, agent=looped_child_agent, max_loops=max_loops)
+
+        if adk_agent is None: raise ValueError("ADK Agent object could not be constructed.")
+        logger.info(f"ADK Agent object prepared: {adk_agent.name} of type {AgentClass.__name__}")
+
+        requirements = ["google-cloud-aiplatform[adk,agent_engines]>=1.93.0", "gofannon"]
+
+        config_name_for_display = agent_config_data.get("name") # Original name from config
+        deployment_display_name = _generate_vertex_deployment_display_name(config_name_for_display, agent_doc_id)
+
+        logger.info(f"Attempting to deploy with display_name: '{deployment_display_name}' (ADK object name: '{adk_agent.name}')")
+
+        # This is the long-running call
+        remote_app = deployed_agent_engines.create(
+            agent_engine=adk_agent, requirements=requirements, display_name=deployment_display_name,
+            description=agent_config_data.get("description", f"Agent: {deployment_display_name}")
+        )
+
+        # If create() completes successfully within Cloud Function timeout
+        logger.info(f"Agent deployment successful (within timeout) for {agent_doc_id}. Resource name: {remote_app.resource_name}")
+        db.collection("agents").document(agent_doc_id).update({
+            "vertexAiResourceName": remote_app.resource_name, "deploymentStatus": "deployed",
+            "lastDeployedAt": firestore.SERVER_TIMESTAMP, "deploymentError": firestore.DELETE_FIELD
+        })
+        return {"success": True, "resourceName": remote_app.resource_name, "message": "Agent deployment initiated and confirmed completed."}
+
+    except Exception as e:
+        # This block handles:
+        # 1. Errors from adk_agent instantiation (before create call).
+        # 2. Errors from deployed_agent_engines.create() if it fails quickly (e.g., bad config, permissions).
+        # If the Cloud Function times out during create(), this block is NOT hit for the timeout itself.
+        # The client gets DEADLINE_EXCEEDED, and Firestore status remains 'deploying_initiated'.
+
+        tb_str = traceback.format_exc()
+        error_message = f"Error during agent deployment for {agent_doc_id}: {str(e)}"
+        logger.error(f"{error_message}\n{tb_str}")
+
+        # Update Firestore to 'error' because the deployment call itself failed or setup failed.
+        # This won't run if the function times out.
+        db.collection("agents").document(agent_doc_id).update({
+            "deploymentStatus": "error",
+            "deploymentError": str(e)[:1000], # Store a snippet
+            "lastDeployedAt": firestore.SERVER_TIMESTAMP # Mark time of this failed attempt
+        })
+
+        if isinstance(e, https_fn.HttpsError): # Re-raise if already an HttpsError
+            raise
+        if "validation error" in str(e).lower() and "pydantic" in str(e).lower():
+            raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message=f"Agent configuration validation failed: {str(e)[:300]}. Check agent names and other parameters.")
+        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=f"Deployment failed: {str(e)[:300]}")
+
+
+@https_fn.on_call(memory=options.MemoryOption.MB_512) # Usually a quick operation
+@handle_exceptions_and_log
+def check_vertex_agent_deployment_status(req: https_fn.CallableRequest):
+    if not req.auth:
+        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required.")
+
+    agent_doc_id = req.data.get("agentDocId")
+    if not agent_doc_id:
+        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="agentDocId is required.")
+
+    logger.info(f"Checking deployment status for agent {agent_doc_id}")
+    _initialize_vertex_ai() # Ensures project/location are set for the client
+
+    project_id, location, _ = _get_gcp_project_config()
+    client_options = {"api_endpoint": f"{location}-aiplatform.googleapis.com"}
+    reasoning_engine_client = ReasoningEngineServiceClient(client_options=client_options)
+    parent = f"projects/{project_id}/locations/{location}"
+
+    try:
+        agent_doc_ref = db.collection("agents").document(agent_doc_id)
+        agent_snap = agent_doc_ref.get()
+        if not agent_snap.exists:
+            raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.NOT_FOUND, message=f"Agent document {agent_doc_id} not found in Firestore.")
+        agent_data = agent_snap.to_dict()
+
+        expected_config_name = agent_data.get("name")
+        expected_display_name = _generate_vertex_deployment_display_name(expected_config_name, agent_doc_id)
+        current_resource_name = agent_data.get("vertexAiResourceName")
+
+        logger.info(f"Expected display name for {agent_doc_id}: '{expected_display_name}'. Current stored resource: {current_resource_name}")
+
+        found_engine_proto = None
+        engine_identified_by = ""
+
+        if current_resource_name:
+            try:
+                engine = reasoning_engine_client.get_reasoning_engine(name=current_resource_name)
+                if engine.display_name == expected_display_name:
+                    found_engine_proto = engine
+                    engine_identified_by = "stored resource_name"
+                else:
+                    logger.warning(f"Stored resource_name {current_resource_name} for agent {agent_doc_id} has mismatched display_name ('{engine.display_name}' vs expected '{expected_display_name}'). Will try listing by display_name.")
+                    # Potentially clear current_resource_name if it's definitively wrong?
+                    # agent_doc_ref.update({"vertexAiResourceName": firestore.DELETE_FIELD})
+            except Exception as e: # e.g., google.api_core.exceptions.NotFound
+                logger.info(f"Failed to get engine by stored resource_name {current_resource_name} for {agent_doc_id}: {e}. Will try listing by display_name.")
+                # Clear the potentially stale resource name from Firestore if it's not found
+                if "NotFound" in str(e) or "could not be found" in str(e):
+                    agent_doc_ref.update({"vertexAiResourceName": firestore.DELETE_FIELD, "deploymentStatus": "error_resource_vanished"})
+
+
+        if not found_engine_proto:
+            logger.info(f"Attempting to find engine for {agent_doc_id} by listing with display_name '{expected_display_name}'.")
+            list_request = ReasoningEngineServiceClient.list_reasoning_engines_request_type(parent=parent, filter=f'display_name="{expected_display_name}"')
+
+            # The list operation is a paginated result, but we expect at most one for a unique display name.
+            engine_list = list(reasoning_engine_client.list_reasoning_engines(request=list_request))
+
+            if engine_list:
+                if len(engine_list) > 1:
+                    logger.warning(f"Multiple engines found for display_name '{expected_display_name}'. Using the first one: {[e.name for e in engine_list]}. This indicates a non-unique display name strategy.")
+                found_engine_proto = engine_list[0]
+                engine_identified_by = "listing by display_name"
+                # Update Firestore with the found resource_name if it wasn't there or was different
+                if current_resource_name != found_engine_proto.name:
+                    agent_doc_ref.update({"vertexAiResourceName": found_engine_proto.name})
+            else:
+                logger.info(f"No engine found for {agent_doc_id} with display_name '{expected_display_name}' via listing.")
+
+
+        update_payload = {"lastStatusCheckAt": firestore.SERVER_TIMESTAMP}
+        final_status_to_report = ""
+
+        if found_engine_proto:
+            logger.info(f"Engine {found_engine_proto.name} (state: {found_engine_proto.state.name}) identified for {agent_doc_id} via {engine_identified_by}.")
+            current_engine_state = found_engine_proto.state
+            update_payload["vertexAiResourceName"] = found_engine_proto.name # Ensure it's up-to-date
+
+            if current_engine_state == ReasoningEngineProto.State.ACTIVE:
+                update_payload["deploymentStatus"] = "deployed"
+                update_payload["deploymentError"] = firestore.DELETE_FIELD
+                update_payload["lastDeployedAt"] = firestore.SERVER_TIMESTAMP # Or use engine's update_time
+            elif current_engine_state == ReasoningEngineProto.State.CREATING or \
+                    current_engine_state == ReasoningEngineProto.State.UPDATING:
+                update_payload["deploymentStatus"] = "deploying_in_progress"
+            elif current_engine_state == ReasoningEngineProto.State.FAILED:
+                update_payload["deploymentStatus"] = "error"
+                # Extract error message if possible from the engine resource (details might be limited)
+                error_details = "Vertex AI reports engine state: FAILED."
+                if hasattr(found_engine_proto, 'latest_failed_operation_error') and found_engine_proto.latest_failed_operation_error:
+                    error_details = f"Vertex AI Error: {found_engine_proto.latest_failed_operation_error.message}"
+                elif hasattr(found_engine_proto, 'error') and found_engine_proto.error: # Check if a general error field exists
+                    error_details = f"Vertex AI Error Status: {found_engine_proto.error.message}"
+
+                update_payload["deploymentError"] = error_details
+            else: # DELETING, or unspecified states
+                update_payload["deploymentStatus"] = f"unknown_vertex_state_{current_engine_state.name.lower()}"
+
+            final_status_to_report = update_payload["deploymentStatus"]
+            agent_doc_ref.update(update_payload)
+            logger.info(f"Agent {agent_doc_id} Firestore status updated to: {final_status_to_report} based on Vertex state {current_engine_state.name}")
+            return {"success": True, "status": final_status_to_report, "resourceName": found_engine_proto.name, "vertexState": current_engine_state.name}
+
+        else: # No engine found at all
+            logger.warning(f"Engine for agent {agent_doc_id} (expected display_name: '{expected_display_name}') not found on Vertex AI.")
+            # Consider if enough time has passed since 'deploying_initiated' to mark as 'error_not_found'
+            last_attempt_at = agent_data.get("lastDeploymentAttemptAt")
+            status_if_not_found = "deploying_initiated" # Default if recently initiated
+
+            if last_attempt_at:
+                # If initiated more than, e.g., 30 minutes ago and still not found, mark as error.
+                # Firestore timestamp vs now comparison is a bit tricky here.
+                # For simplicity, if it was 'deploying_initiated' or 'deploying_in_progress' and now not found,
+                # it's likely an issue.
+                if agent_data.get("deploymentStatus") in ["deploying_initiated", "deploying_in_progress"]:
+                    status_if_not_found = "error_not_found_after_init"
+                    update_payload["deploymentError"] = "Engine not found on Vertex AI after deployment was initiated. It may have failed very early or display name mismatch."
+
+
+            update_payload["deploymentStatus"] = status_if_not_found
+            # Keep vertexAiResourceName as is, or delete it if we are sure it's gone.
+            # update_payload["vertexAiResourceName"] = firestore.DELETE_FIELD
+
+            final_status_to_report = status_if_not_found
+            agent_doc_ref.update(update_payload)
+            logger.info(f"Agent {agent_doc_id} Firestore status updated to: {final_status_to_report} (engine not found on Vertex).")
+            return {"success": True, "status": final_status_to_report, "message": "Engine not found on Vertex AI with expected display name."}
+
+    except Exception as e:
+        tb_str = traceback.format_exc()
+        logger.error(f"Error in check_vertex_agent_deployment_status for {agent_doc_id}: {str(e)}\n{tb_str}")
+        # Do not update Firestore status here as it might overwrite a valid status with a temporary check error
+        if isinstance(e, https_fn.HttpsError): raise
+        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=f"Failed to check status: {str(e)[:200]}")
