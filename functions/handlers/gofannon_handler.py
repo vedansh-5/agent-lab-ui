@@ -1,66 +1,80 @@
-import requests
+import json
+import os # To build the path to the manifest file
+import traceback
 from firebase_admin import firestore
 from firebase_functions import https_fn
 from common.core import db, logger
-from common.config import GOFANNON_MANIFEST_URL
-# The decorator is applied in main.py, so the logic function doesn't need it here.
+# Removed: import requests
+# Removed: from common.config import GOFANNON_MANIFEST_URL
+
+# Path to the local Gofannon manifest file
+# __file__ is the path to the current script (gofannon_handler.py)
+# os.path.dirname(__file__) gives the directory of the current script (functions/handlers)
+# os.path.join('..', 'gofannon_manifest.json') goes up one level (to 'functions') and then to the file
+MANIFEST_FILE_PATH = os.path.join(os.path.dirname(__file__), '..', 'gofannon_manifest.json')
 
 def _get_gofannon_tool_manifest_logic(req: https_fn.CallableRequest):
-    # Authentication check is good practice here, or rely on the decorator in main.py
-    # and the Callable Function's built-in auth checking.
-    # For direct calls to this logic (e.g. testing), explicit check is safer.
+    # Authentication check
     if not req.auth:
-        # This error will be caught and logged by the handle_exceptions_and_log decorator
-        # if it's applied to the calling function in main.py.
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
             message="Authentication required to fetch Gofannon tool manifest."
         )
 
-    logger.info("Fetching Gofannon tool manifest (logic part).")
+    logger.info(f"Fetching Gofannon tool manifest from local file: {MANIFEST_FILE_PATH} (logic part).")
     try:
-        # Option 1: Fetch live from Gofannon URL each time (as in original)
-        # response = requests.get(GOFANNON_MANIFEST_URL, timeout=10)
-        # response.raise_for_status() # Raise an exception for HTTP errors
-        # tools_manifest_data = response.json()
-        # if not isinstance(tools_manifest_data, dict) or "tools" not in tools_manifest_data:
-        #    logger.error(f"Fetched Gofannon manifest is not in expected format: {tools_manifest_data}")
-        #    raise ValueError("Gofannon manifest format error.")
-        # actual_tools = tools_manifest_data.get("tools", [])
+        if not os.path.exists(MANIFEST_FILE_PATH):
+            logger.error(f"Local Gofannon manifest file not found at: {MANIFEST_FILE_PATH}")
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Local Gofannon manifest file not found. Please ensure 'gofannon_manifest.json' exists in the 'functions' directory."
+            )
 
-        # Option 2: Return a hardcoded/simplified manifest (as in original get_gofannon_tool_manifest)
-        # This seems to be what the original code was doing despite the URL constant.
-        # If fetching live is intended, uncomment Option 1 and adjust.
-        tools_manifest_data_to_store = {
-            "tools": [{
-                "id": "gofannon.open_notify_space.iss_locator.IssLocator",
-                "name": "ISS Locator",
-                "description": "Locates the International Space Station.",
-                "module_path": "gofannon.open_notify_space.iss_locator", # Make sure this path is valid in the Cloud Functions environment
-                "class_name": "IssLocator"
-            }],
-            # "last_updated_url": GOFANNON_MANIFEST_URL # Keep track of source if fetched live
+        with open(MANIFEST_FILE_PATH, 'r') as f:
+            tools_manifest_data = json.load(f)
+
+        if not isinstance(tools_manifest_data, dict) or "tools" not in tools_manifest_data:
+            logger.error(f"Local Gofannon manifest is not in expected format: {tools_manifest_data}")
+            raise ValueError("Local Gofannon manifest format error. It must be a JSON object with a 'tools' array.")
+
+            # Add server timestamp for when this version of the manifest was stored/generated
+        # and mark the source.
+        manifest_with_timestamp = {
+            **tools_manifest_data,
+            "last_updated_firestore": firestore.SERVER_TIMESTAMP,
+            "source": "local_project_file" # Clearly indicate the origin
         }
-        # Add server timestamp for when this version of the manifest was stored/generated
-        manifest_with_timestamp = {**tools_manifest_data_to_store, "last_updated_firestore": firestore.SERVER_TIMESTAMP}
 
-        # Store/update in Firestore
+        # Store/update in Firestore (this allows the client to fetch it without calling the function every time if cached)
         db.collection("gofannonToolManifest").document("latest").set(manifest_with_timestamp)
-        logger.info("Gofannon tool manifest (hardcoded version) updated/set in Firestore.")
+        logger.info("Local Gofannon tool manifest updated/set in Firestore.")
 
-        return {"success": True, "manifest": tools_manifest_data_to_store} # Return the data without Firestore timestamp for client
+        # Return the manifest data (without Firestore timestamp) to the client for immediate use
+        return {"success": True, "manifest": tools_manifest_data}
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching Gofannon manifest from URL '{GOFANNON_MANIFEST_URL}': {e}")
+    except FileNotFoundError: # Should be caught by os.path.exists, but as a robust fallback
+        logger.error(f"Local Gofannon manifest file not found (FileNotFoundError) at: {MANIFEST_FILE_PATH}")
         raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.UNAVAILABLE,
-            message=f"Could not fetch tool manifest: {e}"
+            code=https_fn.FunctionsErrorCode.NOT_FOUND,
+            message="Local Gofannon manifest file could not be read."
         )
-    except ValueError as e: # For format errors if fetching live
-        logger.error(f"Error processing Gofannon manifest: {e}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding JSON from local Gofannon manifest '{MANIFEST_FILE_PATH}': {e}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message=f"Error parsing local tool manifest: {e}. Ensure it is valid JSON."
+        )
+    except ValueError as e: # For format errors
+        logger.error(f"Error processing local Gofannon manifest: {e}")
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INTERNAL,
-            message=f"Error processing tool manifest: {e}"
+            message=f"Error processing local tool manifest: {e}"
+        )
+    except Exception as e: # Catch-all for other unexpected errors during file read or processing
+        logger.error(f"Unexpected error loading local Gofannon manifest: {e}\n{traceback.format_exc()}", exc_info=True) # Added traceback
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="An unexpected error occurred while loading the tool manifest."
         )
 
 __all__ = ['_get_gofannon_tool_manifest_logic']

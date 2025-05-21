@@ -20,7 +20,7 @@ from handlers.gofannon_handler import _get_gofannon_tool_manifest_logic
 
 # --- Cloud Function Definitions ---  
 
-@https_fn.on_call() # Default memory and timeout unless overridden  
+@https_fn.on_call(memory=options.MemoryOption.MB_512) # Default memory and timeout unless overridden
 @handle_exceptions_and_log # Apply the decorator to the Firebase Function wrapper  
 def get_gofannon_tool_manifest(req: https_fn.CallableRequest):
     """  
