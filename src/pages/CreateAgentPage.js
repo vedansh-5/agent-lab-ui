@@ -1,28 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import AgentForm from '../components/agents/AgentForm'; // Already MUI-fied
+import AgentForm from '../components/agents/AgentForm';
 import { useAuth } from '../contexts/AuthContext';
 import { createAgentInFirestore, getAgentDetails, updateAgentInFirestore } from '../services/firebaseService';
-import LoadingSpinner from '../components/common/LoadingSpinner'; // Already MUI-fied
-import ErrorMessage from '../components/common/ErrorMessage'; // Already MUI-fied
-
-import { Container, Typography, Box } from '@mui/material'; // Added Alert
-// import { useSnackbar } from 'notistack'; // For better notifications (optional, needs setup)
+import LoadingSpinner from '../components/common/LoadingSpinner';
+import ErrorMessage from '../components/common/ErrorMessage';
+import { Container, Typography, Box } from '@mui/material';
 
 const CreateAgentPage = ({ isEditMode = false }) => {
     const navigate = useNavigate();
     const { currentUser } = useAuth();
     const { agentId } = useParams();
 
-    const [initialAgentData, setInitialAgentData] = useState(null);
+    const [initialAgentData, setInitialAgentData] = useState(null); // Will include childAgents, maxLoops etc.
     const [loading, setLoading] = useState(isEditMode);
     const [error, setError] = useState(null);
-    const [isSubmitting, setIsSubmitting] = useState(false); // Separate state for form submission
-
-    // const { enqueueSnackbar } = useSnackbar(); // Optional: for nicer notifications
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
-        if (isEditMode && agentId && currentUser) { // Added currentUser check for early exit
+        if (isEditMode && agentId && currentUser) {
             const fetchAgent = async () => {
                 setLoading(true);
                 setError(null);
@@ -30,10 +26,16 @@ const CreateAgentPage = ({ isEditMode = false }) => {
                     const agent = await getAgentDetails(agentId);
                     if (agent.userId !== currentUser.uid) {
                         setError("You are not authorized to edit this agent.");
-                        setInitialAgentData(null);
+                        setInitialAgentData(null); // Clear any potentially stale data
                         return;
                     }
-                    setInitialAgentData(agent);
+                    // Ensure childAgents is an array, even if undefined in Firestore
+                    // Ensure maxLoops has a default if not present
+                    setInitialAgentData({
+                        ...agent,
+                        childAgents: agent.childAgents || [],
+                        maxLoops: agent.maxLoops || 3,
+                    });
                 } catch (err) {
                     console.error("Error fetching agent for edit:", err);
                     setError(`Failed to load agent details: ${err.message}`);
@@ -43,50 +45,70 @@ const CreateAgentPage = ({ isEditMode = false }) => {
             };
             fetchAgent();
         } else if (!isEditMode) {
-            setLoading(false); // Not edit mode, no initial loading needed for data
+            // For new agent, provide default empty/initial values expected by AgentForm
+            setInitialAgentData({
+                name: '',
+                description: '',
+                agentType: 'Agent',
+                model: 'gemini-1.5-flash-001', // Default model from AgentForm constants
+                instruction: '',
+                tools: [],
+                maxLoops: 3,
+                childAgents: [],
+            });
+            setLoading(false);
         }
     }, [isEditMode, agentId, currentUser]);
 
 
-    const handleSaveAgent = async (agentData) => {
+    const handleSaveAgent = async (agentData) => { // agentData now includes childAgents, maxLoops
         if (!currentUser) {
             setError("You must be logged in to save an agent.");
-            // enqueueSnackbar("You must be logged in.", { variant: 'error' });
             return;
         }
         setIsSubmitting(true);
         setError(null);
         try {
             let newAgentId;
+            // Clean up client-side 'id' from childAgents before saving to Firestore,
+            // as Firestore generates its own IDs for subcollections if we ever go that route.
+            // For now, they are just part of the parent document.
+            const finalAgentData = {
+                ...agentData,
+                childAgents: agentData.childAgents ? agentData.childAgents.map(ca => {
+                    const { id, ...rest } = ca; // Remove client-side id
+                    return rest;
+                }) : []
+            };
+
+
             if (isEditMode && agentId) {
-                await updateAgentInFirestore(agentId, agentData);
+                await updateAgentInFirestore(agentId, finalAgentData);
                 newAgentId = agentId;
-                // enqueueSnackbar("Agent updated successfully!", { variant: 'success' });
-                alert("Agent updated successfully!"); // Simple alert
+                alert("Agent updated successfully!");
             } else {
-                newAgentId = await createAgentInFirestore(currentUser.uid, agentData);
-                // enqueueSnackbar("Agent created successfully!", { variant: 'success' });
-                alert("Agent created successfully!"); // Simple alert
+                newAgentId = await createAgentInFirestore(currentUser.uid, finalAgentData);
+                alert("Agent created successfully!");
             }
             navigate(`/agent/${newAgentId}`);
         } catch (err) {
             console.error("Error saving agent:", err);
             const errorMessage = `Failed to ${isEditMode ? 'update' : 'create'} agent. ${err.message || 'Please try again.'}`;
             setError(errorMessage);
-            // enqueueSnackbar(errorMessage, { variant: 'error' });
         } finally {
             setIsSubmitting(false);
         }
     };
 
     if (loading) return <Box display="flex" justifyContent="center" py={5}><LoadingSpinner /></Box>;
-
-    // If error and no data to show form for edit mode, display error prominently.
     if (error && (isEditMode && !initialAgentData)) return <Container><ErrorMessage message={error} /></Container>;
-
-    // For edit mode, ensure initialAgentData is loaded before rendering form, unless there was an auth error
-    if (isEditMode && !initialAgentData && !error) { // Still loading or not found, but not an explicit error yet
-        return <Box display="flex" justifyContent="center" py={5}><Typography>Loading agent data or agent not found...</Typography></Box>;
+    if (isEditMode && !initialAgentData && !error) {
+        return <Box display="flex" justifyContent="center" py={5}><Typography>Loading agent data...</Typography></Box>;
+    }
+    // Ensure initialAgentData is available before rendering AgentForm
+    if (!initialAgentData) {
+        // This case should ideally be covered by loading or error states
+        return <Box display="flex" justifyContent="center" py={5}><Typography>Preparing form...</Typography></Box>;
     }
 
     return (
@@ -94,16 +116,13 @@ const CreateAgentPage = ({ isEditMode = false }) => {
             <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 3 }}>
                 {isEditMode ? 'Edit Agent' : 'Create New Agent'}
             </Typography>
-            {error && !isSubmitting && <ErrorMessage message={error} sx={{ mb: 2 }} />} {/* Show general page errors if not submitting */}
+            {error && !isSubmitting && <ErrorMessage message={error} sx={{ mb: 2 }} />}
 
-            {/* Render form if not in edit mode OR if in edit mode and data is loaded */}
-            {(!isEditMode || (isEditMode && initialAgentData)) && (
-                <AgentForm
-                    onSubmit={handleSaveAgent}
-                    initialData={isEditMode ? initialAgentData : {}}
-                    isSaving={isSubmitting}
-                />
-            )}
+            <AgentForm
+                onSubmit={handleSaveAgent}
+                initialData={initialAgentData}
+                isSaving={isSubmitting}
+            />
         </Container>
     );
 };

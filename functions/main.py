@@ -4,6 +4,7 @@ import importlib
 import requests
 import traceback # For full traceback
 import asyncio # For running async code within sync function
+import re # Added for display_name sanitization
 
 import functools # For decorator wrapping
 
@@ -25,20 +26,19 @@ CORS_ORIGINS = [
 if os.environ.get('FUNCTION_TARGET', None):
     options.set_global_options(
         region="us-central1",
-        # cors=options.CorsOptions(cors_origins=CORS_ORIGINS, cors_methods=["get", "post", "options", "delete"])
     )
 
 # --- Global Constants ---
 GOFANNON_MANIFEST_URL = "https://raw.githubusercontent.com/The-AI-Alliance/gofannon/main/manifest.json"
 
 # --- Error Handling Decorator ---
-def handle_exceptions_and_log(func): # Synchronous decorator
+def handle_exceptions_and_log(func):
     @functools.wraps(func)
-    def wrapper(req: https_fn.CallableRequest, *args, **kwargs): # Synchronous wrapper
+    def wrapper(req: https_fn.CallableRequest, *args, **kwargs):
         func_name = func.__name__
         try:
             logger.info(f"Function {func_name} called with data: {req.data}")
-            return func(req, *args, **kwargs) # Direct synchronous call
+            return func(req, *args, **kwargs)
         except https_fn.HttpsError as e:
             logger.warn(f"Function {func_name} raised HttpsError: {e.message} (Code: {e.code.value})")
             raise
@@ -107,11 +107,36 @@ def _instantiate_tool(tool_config):
             raise ValueError(f"Error instantiating tool {tool_id_for_log}: {e}")
     raise ValueError(f"Unsupported or incomplete tool configuration for tool ID {tool_config.get('id', 'N/A')}")
 
+def _sanitize_adk_agent_name(name_str: str, prefix_if_needed: str = "agent_") -> str:
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name_str)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f"_{sanitized}"
+    if not sanitized or not (sanitized[0].isalpha() or sanitized[0] == '_'):
+        sanitized = f"{prefix_if_needed}{sanitized}"
+    sanitized = re.sub(r'_+', '_', sanitized)
+    return sanitized[:63]
 
-# --- Tool Management Handler ---
+def _instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context="parent", child_index=0):
+    from google.adk.agents import Agent
+
+    original_child_name = agent_config.get('name', f'child_{child_index}')
+    base_name_for_adk = f"{original_child_name}_{parent_adk_name_for_context}_{os.urandom(3).hex()}"
+    final_child_agent_name = _sanitize_adk_agent_name(base_name_for_adk, prefix_if_needed=f"child_{child_index}_")
+
+    logger.info(f"Instantiating child ADK agent with internal name '{final_child_agent_name}' (original: '{original_child_name}')")
+    child_tools = [_instantiate_tool(tc) for tc in agent_config.get("tools", [])]
+
+    return Agent(
+        name=final_child_agent_name,
+        description=agent_config.get("description"),
+        model=agent_config.get("model", "gemini-1.5-flash-001"),
+        instruction=agent_config.get("instruction"),
+        tools=child_tools
+    )
+
 @https_fn.on_call()
 @handle_exceptions_and_log
-def get_gofannon_tool_manifest(req: https_fn.CallableRequest): # Synchronous
+def get_gofannon_tool_manifest(req: https_fn.CallableRequest):
     if not req.auth:
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required.")
     logger.info("Fetching Gofannon tool manifest.")
@@ -130,36 +155,124 @@ def get_gofannon_tool_manifest(req: https_fn.CallableRequest): # Synchronous
         logger.error(f"Error fetching Gofannon manifest from URL: {e}")
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAVAILABLE, message=f"Could not fetch tool manifest: {e}")
 
-
-    # --- Agent Deployment and Management Handlers ---
 @https_fn.on_call(memory=options.MemoryOption.GB_1, timeout_sec=540)
 @handle_exceptions_and_log
-def deploy_agent_to_vertex(req: https_fn.CallableRequest): # Synchronous
+def deploy_agent_to_vertex(req: https_fn.CallableRequest):
     if not req.auth: raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required.")
     agent_config_data, agent_doc_id = req.data.get("agentConfig"), req.data.get("agentDocId")
     if not agent_config_data or not agent_doc_id: raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="Agent config and agentDocId are required.")
 
-    logger.info(f"Deploying agent {agent_doc_id} with config: {agent_config_data}")
+    logger.info(f"Deploying agent {agent_doc_id} with config: {json.dumps(agent_config_data, indent=2)}")
     _initialize_vertex_ai()
     from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent
     from vertexai import agent_engines as deployed_agent_engines
 
     try:
-        tools_list = [_instantiate_tool(tc) for tc in agent_config_data.get("tools", [])]
-        AgentClass = {"Agent": Agent, "SequentialAgent": SequentialAgent, "LoopAgent": LoopAgent, "ParallelAgent": ParallelAgent}.get(agent_config_data.get("agentType", "Agent"), Agent)
-        adk_agent = AgentClass(
-            name=agent_config_data.get("name", f"adk-agent-{agent_doc_id}")[:63],
-            model=agent_config_data.get("model", "gemini-1.5-flash-001"),
-            description=agent_config_data.get("description"),
-            instruction=agent_config_data.get("instruction"), tools=tools_list
-        )
-        logger.info(f"ADK Agent object created: {adk_agent.name} of type {AgentClass.__name__}")
+        agent_type_str = agent_config_data.get("agentType")
+        AgentClass = {
+            "Agent": Agent,
+            "SequentialAgent": SequentialAgent,
+            "LoopAgent": LoopAgent,
+            "ParallelAgent": ParallelAgent
+        }.get(agent_type_str)
+
+        if not AgentClass:
+            logger.error(f"Invalid agentType specified: {agent_type_str}")
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message=f"Invalid agentType: {agent_type_str}."
+            )
+
+        parent_agent_name_str = agent_config_data.get("name", f"agent_{agent_doc_id}")
+        parent_adk_name = _sanitize_adk_agent_name(parent_agent_name_str, prefix_if_needed=f"parent_{agent_doc_id}_")
+
+        agent_description = agent_config_data.get("description")
+
+        common_args_for_parent = {
+            "name": parent_adk_name,
+            "description": agent_description
+        }
+        adk_agent = None
+
+        instantiated_parent_tools = [_instantiate_tool(tc) for tc in agent_config_data.get("tools", [])]
+
+        if AgentClass == Agent:
+            adk_agent = Agent(
+                **common_args_for_parent,
+                model=agent_config_data.get("model", "gemini-1.5-flash-001"),
+                instruction=agent_config_data.get("instruction"),
+                tools=instantiated_parent_tools
+            )
+        elif AgentClass == SequentialAgent or AgentClass == ParallelAgent:
+            child_agent_configs = agent_config_data.get("childAgents", [])
+            instantiated_child_agents = []
+            if child_agent_configs:
+                logger.info(f"Instantiating {len(child_agent_configs)} child agents for {agent_type_str} '{parent_adk_name}'.")
+                for child_idx, child_config in enumerate(child_agent_configs):
+                    instantiated_child_agents.append(
+                        _instantiate_adk_agent_from_config(child_config, parent_adk_name, child_idx)
+                    )
+            else:
+                logger.warning(f"No child agents provided for {agent_type_str} '{parent_adk_name}'. ADK might require child agents for these types to be functional.")
+
+                # ** CRITICAL FIX: Use sub_agents keyword argument in the constructor **
+            adk_agent = AgentClass(**common_args_for_parent, sub_agents=instantiated_child_agents)
+            # No longer needed: adk_agent.agents = instantiated_child_agents
+
+            logger.info(f"{agent_type_str} '{parent_adk_name}' created with {len(instantiated_child_agents)} sub_agents.")
+
+        elif AgentClass == LoopAgent:
+            loop_child_agent_name_str = f"{parent_adk_name}_looped_child"
+            loop_child_adk_name = _sanitize_adk_agent_name(loop_child_agent_name_str, prefix_if_needed="looped_")
+
+            looped_child_agent = Agent(
+                name=loop_child_adk_name,
+                model=agent_config_data.get("model", "gemini-1.5-flash-001"),
+                instruction=agent_config_data.get("instruction"),
+                tools=instantiated_parent_tools
+            )
+            max_loops = int(agent_config_data.get("maxLoops", 3))
+            adk_agent = LoopAgent(
+                **common_args_for_parent,
+                agent=looped_child_agent, # LoopAgent expects 'agent' not 'sub_agents'
+                max_loops=max_loops
+            )
+            logger.info(f"LoopAgent '{parent_adk_name}' created with max_loops={max_loops}.")
+
+        if adk_agent is None:
+            raise ValueError("ADK Agent object could not be constructed.")
+
+        logger.info(f"ADK Agent object prepared: {adk_agent.name} of type {AgentClass.__name__}")
+
         requirements = ["google-cloud-aiplatform[adk,agent_engines]>=1.93.0", "gofannon"]
-        display_name = "".join(filter(str.isalnum, agent_config_data.get("name", f"deployed-agent-{agent_doc_id}").lower().replace(" ", "-")))[:60]
+
+        base_display_name_for_deployment = agent_config_data.get("name", f"adk-agent-{agent_doc_id}")
+        processed_name = re.sub(r'[^a-z0-9-]+', '-', base_display_name_for_deployment.lower()).strip('-')
+
+        if not processed_name:
+            processed_name = f"agent-{agent_doc_id[:8].lower()}"
+        if not processed_name[0].isalpha():
+            processed_name = f"agent-{processed_name}"
+        deployment_display_name = processed_name.strip('-')[:60]
+
+        if len(deployment_display_name) < 4:
+            unique_suffix = re.sub(r'[^a-z0-9]', '', agent_doc_id.lower())[:10]
+            current_prefix = deployment_display_name[:min(3, len(deployment_display_name))]
+            deployment_display_name = f"{current_prefix}{unique_suffix}"
+            if not deployment_display_name[0].isalpha(): deployment_display_name = f"a{deployment_display_name}"
+            deployment_display_name = deployment_display_name.strip('-')[:60]
+            while len(deployment_display_name) < 4 and len(deployment_display_name) <= 60 : deployment_display_name += "x"
+            deployment_display_name = deployment_display_name[:60]
+
+        if not deployment_display_name: deployment_display_name = f"agent-{agent_doc_id[:8].lower()}"
+        if not deployment_display_name[0].isalpha(): deployment_display_name = f"a{deployment_display_name[:59]}"
+        deployment_display_name = deployment_display_name[:60]
+
+        logger.info(f"Attempting to deploy with display_name: '{deployment_display_name}' (ADK object name: '{adk_agent.name}')")
 
         remote_app = deployed_agent_engines.create(
-            agent_engine=adk_agent, requirements=requirements, display_name=display_name,
-            description=agent_config_data.get("description", f"Agent: {display_name}")
+            agent_engine=adk_agent, requirements=requirements, display_name=deployment_display_name,
+            description=agent_config_data.get("description", f"Agent: {deployment_display_name}")
         )
         logger.info(f"Agent deployment initiated for {agent_doc_id}. Resource name: {remote_app.resource_name}")
         db.collection("agents").document(agent_doc_id).update({
@@ -168,14 +281,17 @@ def deploy_agent_to_vertex(req: https_fn.CallableRequest): # Synchronous
         })
         return {"success": True, "resourceName": remote_app.resource_name, "message": "Agent deployment initiated."}
     except Exception as e:
-        logger.error(f"Error during agent deployment for {agent_doc_id}: {e}")
+        logger.error(f"Error during agent deployment for {agent_doc_id}: {e}\n{traceback.format_exc()}")
         db.collection("agents").document(agent_doc_id).update({"deploymentStatus": "error", "deploymentError": str(e), "lastDeployedAt": firestore.SERVER_TIMESTAMP})
-        if not isinstance(e, https_fn.HttpsError): raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=f"Deployment failed: {str(e)[:200]}")
+        if not isinstance(e, https_fn.HttpsError):
+            if "validation error" in str(e).lower() and "pydantic" in str(e).lower():
+                raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message=f"Agent configuration validation failed: {str(e)[:300]}. Check agent names and other parameters.")
+            raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=f"Deployment failed: {str(e)[:300]}")
         raise
 
 @https_fn.on_call()
 @handle_exceptions_and_log
-def delete_vertex_agent(req: https_fn.CallableRequest): # Synchronous
+def delete_vertex_agent(req: https_fn.CallableRequest):
     if not req.auth: raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required.")
     resource_name, agent_doc_id = req.data.get("resourceName"), req.data.get("agentDocId")
     if not resource_name or not agent_doc_id: raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="Vertex AI resourceName and agentDocId are required.")
@@ -193,14 +309,18 @@ def delete_vertex_agent(req: https_fn.CallableRequest): # Synchronous
         return {"success": True, "message": f"Agent {resource_name} deletion initiated."}
     except Exception as e:
         logger.error(f"Error deleting Vertex agent {resource_name}: {e}")
-        if "NotFound" in str(e): raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.NOT_FOUND, message=f"Agent {resource_name} not found.")
+        if "NotFound" in str(e):
+            db.collection("agents").document(agent_doc_id).update({
+                "vertexAiResourceName": firestore.DELETE_FIELD, "deploymentStatus": "not_found_on_vertex",
+                "lastDeployedAt": firestore.DELETE_FIELD, "deploymentError": "Agent not found on Vertex AI during deletion attempt."
+            })
+            raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.NOT_FOUND, message=f"Agent {resource_name} not found on Vertex AI.")
         if not isinstance(e, https_fn.HttpsError): raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=f"Failed to delete agent: {str(e)[:200]}")
         raise
 
-    # --- Agent Runtime Handler ---
 @https_fn.on_call(memory=options.MemoryOption.MB_512, timeout_sec=180)
 @handle_exceptions_and_log
-def query_deployed_agent(req: https_fn.CallableRequest): # Synchronous handler
+def query_deployed_agent(req: https_fn.CallableRequest):
     if not req.auth: raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required.")
 
     resource_name = req.data.get("resourceName")
@@ -219,18 +339,14 @@ def query_deployed_agent(req: https_fn.CallableRequest): # Synchronous handler
     from vertexai import agent_engines as deployed_agent_engines
     from google.adk.sessions import VertexAiSessionService
 
-    # These are obtained synchronously
     project_id, location, _ = _get_gcp_project_config()
 
-    # Define an async inner function for awaitable operations
     async def _query_async_logic():
-        # Re-scope session_id_from_client if it's modified for logging/control flow clarity,
-        # though it's passed by value from the outer scope.
         _current_session_id_from_client = session_id_from_client
         current_adk_session_id = None
 
         session_service = VertexAiSessionService(project=project_id, location=location)
-        remote_app = deployed_agent_engines.get(resource_name) # This is a sync call
+        remote_app = deployed_agent_engines.get(resource_name)
         logger.info(f"Async: Retrieved remote app for querying: {remote_app.name}")
 
         if _current_session_id_from_client:
@@ -254,56 +370,73 @@ def query_deployed_agent(req: https_fn.CallableRequest): # Synchronous handler
             logger.info(f"Async: Created new ADK session ID: {current_adk_session_id}")
 
         if not current_adk_session_id:
-            # This path should ideally not be hit if create_session works.
             raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message="Failed to initialize agent session.")
 
-        logger.info(f"Async: Using ADK session: {current_adk_session_id} for user: {adk_user_id}")
+        logger.info(f"Async: Using ADK session: {current_adk_session_id} for user: {adk_user_id} with message: '{message_text}'")
         all_events, final_text_response = [], ""
-        for event in remote_app.stream_query(message=message_text, user_id=adk_user_id, session_id=current_adk_session_id): # Sync iteration
-            logger.debug(f"Async: Agent event: {event}")
+
+        for event_idx, event in enumerate(remote_app.stream_query(message=message_text, user_id=adk_user_id, session_id=current_adk_session_id)):
+            logger.debug(f"Async: Agent event {event_idx}: type={event.get('type')}, content_keys={list(event.get('content', {}).keys()) if event.get('content') else 'NoContent'}")
             all_events.append(event)
-            if event.get('content') and event['content'].get('parts'):
+            if event.get('type') == 'text_delta' and event.get('content') and event['content'].get('parts'):
                 for part in event['content']['parts']:
-                    if 'text' in part: final_text_response += part['text']
+                    if 'text' in part:
+                        final_text_response += part['text']
+            elif event.get('type') == 'tool_code_execution_output' and event.get('content') and event['content'].get('parts'):
+                for part in event['content']['parts']:
+                    if 'text' in part:
+                        logger.info(f"Tool output with text: {part['text']}")
+
+        if not final_text_response and all_events:
+            logger.info("No 'text_delta' events received. Checking last event for text.")
+            for event in reversed(all_events):
+                if event.get('content') and event['content'].get('parts'):
+                    temp_text = ""
+                    for part in event['content']['parts']:
+                        if 'text' in part:
+                            temp_text += part['text']
+                    if temp_text:
+                        final_text_response = temp_text
+                        logger.info(f"Found text in non-text_delta event: {final_text_response}")
+                        break
+
         logger.info(f"Async: Final response for session {current_adk_session_id}: {final_text_response[:200]}...")
         return {"events": all_events, "responseText": final_text_response, "adkSessionId": current_adk_session_id}
 
     try:
-        # Manage event loop for the async part
-        # asyncio.run() is simpler if no loop is already running.
-        # If Firebase runs its own loop (unlikely for sync handlers), this might need adjustment,
-        # but for a sync handler, creating a new loop or using asyncio.run() is standard.
         try:
             result_data = asyncio.run(_query_async_logic())
-        except RuntimeError as e: # Fallback if asyncio.run() says a loop is already running
-            if "cannot be called when another asyncio event loop is running" in str(e):
-                logger.warning("asyncio.run() failed as a loop is already running. Using existing loop or manual loop.")
+        except RuntimeError as e:
+            if "cannot be called when another asyncio event loop is running" in str(e) or \
+                    " asyncio.run() cannot be called from a running event loop" in str(e):
+                logger.warning("asyncio.run() failed as a loop is already running. Using existing loop.")
                 loop = asyncio.get_event_loop()
-                if loop.is_closed(): # Should not happen if get_event_loop found one
+                if loop.is_closed():
+                    logger.info("Event loop was closed, creating new one.")
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     result_data = loop.run_until_complete(_query_async_logic())
                     loop.close()
-                else: # loop is running
-                    result_data = loop.run_until_complete(_query_async_logic()) # This might still be problematic if not careful with tasks
+                else:
+                    result_data = loop.run_until_complete(_query_async_logic())
             else:
                 raise
 
-
-                # Firestore save (synchronous)
         run_data = {
             "firebaseUserId": firebase_auth_uid, "adkUserId": adk_user_id,
             "adkSessionId": result_data["adkSessionId"], "vertexAiResourceName": resource_name,
-            "inputMessage": message_text, "outputEventsRaw": json.dumps(result_data["events"]),
-            "finalResponseText": result_data["responseText"], "timestamp": firestore.SERVER_TIMESTAMP
+            "inputMessage": message_text,
+            "outputEventsRaw": json.dumps(result_data["events"]),
+            "finalResponseText": result_data["responseText"],
+            "timestamp": firestore.SERVER_TIMESTAMP
         }
         db.collection("agents").document(firestore_agent_id).collection("runs").add(run_data)
         logger.info(f"Sync: Agent run saved for agent {firestore_agent_id}, session {result_data['adkSessionId']}.")
         return {"success": True, **result_data}
 
-    except Exception as e: # Catch-all for errors during async execution or outer sync part
-        # The decorator will handle logging the full traceback and converting to HttpsError
-        # Add specific error mapping if needed here, before re-raising.
-        if "NotFound" in str(e) and ("reasoningEngines" in str(e) or "DeployedAgent" in str(e) or f"'{resource_name}' not found" in str(e)):
+    except Exception as e:
+        tb_str_query = traceback.format_exc()
+        logger.error(f"Error in query_deployed_agent (sync or async part) for {resource_name}: {e}\n{tb_str_query}")
+        if "NotFound" in str(e) and (f"projects/{project_id}/locations/{location}/reasoningEngines/{resource_name}" in str(e).lower() or f"deployedagent \"{resource_name}\" not found" in str(e).lower() or f"reasoning engine {resource_name} not found" in str(e).lower()):
             raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.NOT_FOUND, message=f"Agent resource {resource_name} not found or not ready.")
-        raise # Re-raise for the decorator to handle
+        raise
