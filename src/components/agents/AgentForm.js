@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import ToolSelector from '../tools/ToolSelector';
 import ChildAgentFormDialog from './ChildAgentFormDialog'; // Updated import
 import { fetchGofannonTools } from '../../services/agentService';
-import { AGENT_TYPES, GEMINI_MODELS } from '../../constants/agentConstants'; // Updated import
+import { AGENT_TYPES,
+    GEMINI_MODELS} from '../../constants/agentConstants'; // Updated import
 import {
     TextField, Button, Select, MenuItem, FormControl, InputLabel,
     Paper, Grid, Box, CircularProgress, Typography, IconButton, List,

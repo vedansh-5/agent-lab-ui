@@ -46,7 +46,7 @@ def deploy_agent_to_vertex(req: https_fn.CallableRequest):
     return _deploy_agent_to_vertex_logic(req)
 
 
-@https_fn.on_call() # Default resources  
+@https_fn.on_call(memory=options.MemoryOption.MB_512) # Default resources
 @handle_exceptions_and_log
 def delete_vertex_agent(req: https_fn.CallableRequest):
     """  

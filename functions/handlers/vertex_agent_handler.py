@@ -9,7 +9,6 @@ from vertexai import agent_engines as deployed_agent_engines # Specific import
 from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent
 from google.adk.sessions import VertexAiSessionService
 
-
 from common.core import db, logger
 from common.config import get_gcp_project_config
 from common.utils import initialize_vertex_ai
@@ -304,7 +303,7 @@ async def _query_async_logic_internal(resource_name, message_text, adk_user_id, 
     for event in remote_app.stream_query(
             message=message_text, user_id=adk_user_id, session_id=current_adk_session_id
     ):
-        logger.debug(f"Query Logic (Event {event_idx}): type={event.get('type')}, "
+        logger.info(f"Query Logic (Event {event_idx}): type={event.get('type')}, "
                      f"content_keys={list(event.get('content', {}).keys()) if event.get('content') else 'NoContent'}")
         all_events.append(event) # Store all events for potential full history or debugging
 
@@ -336,6 +335,8 @@ async def _query_async_logic_internal(resource_name, message_text, adk_user_id, 
                     break # Use the first text found from the end
 
     logger.info(f"Query Logic (Result): Final accumulated response text for session '{current_adk_session_id}': {final_text_response[:200]}...")
+    logger.info(f"Query Logic (Result): Number of events: {len(all_events)}")
+
     return {"events": all_events, "responseText": final_text_response, "adkSessionId": current_adk_session_id}
 
 def _query_deployed_agent_logic(req: https_fn.CallableRequest):

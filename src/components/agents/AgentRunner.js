@@ -1,16 +1,88 @@
+// src/components/agents/AgentRunner.js
 import React, { useState, useRef, useEffect } from 'react';
 import { queryAgent } from '../../services/agentService';
-import ErrorMessage from '../common/ErrorMessage'; // Already MUI-fied
+import ErrorMessage from '../common/ErrorMessage';
+
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import {
     Paper, Typography, TextField, Button, Box, List, ListItem,
-    ListItemText, Avatar, CircularProgress, IconButton
+    ListItemText, Avatar, CircularProgress, IconButton, Link, Divider
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import PersonIcon from '@mui/icons-material/Person';
 import SmartToyIcon from '@mui/icons-material/SmartToy'; // Icon for agent
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import RestartAltIcon from '@mui/icons-material/RestartAlt'; // Icon for reset session
+
+// MUI components mapping for ReactMarkdown
+const muiMarkdownComponents = {
+    p: ({node, ...props}) => <Typography variant="body1" gutterBottom {...props} />,
+    h1: ({node, ...props}) => <Typography variant="h4" component="h1" gutterBottom {...props} />, // Adjusted heading levels for chat context
+    h2: ({node, ...props}) => <Typography variant="h5" component="h2" gutterBottom {...props} />,
+    h3: ({node, ...props}) => <Typography variant="h6" component="h3" gutterBottom {...props} />,
+    h4: ({node, ...props}) => <Typography variant="subtitle1" component="h4" gutterBottom {...props} />,
+    h5: ({node, ...props}) => <Typography variant="subtitle2" component="h5" gutterBottom {...props} />,
+    h6: ({node, ...props}) => <Typography variant="body2" component="h6" gutterBottom {...props} />,
+    a: ({node, ...props}) => <Link target="_blank" rel="noopener noreferrer" {...props} />,
+    ul: ({node, ordered, ...props}) => <List sx={{ listStyleType: 'disc', pl: 2.5, py:0.5 }} {...props} />,
+    ol: ({node, ordered, ...props}) => <List sx={{ listStyleType: 'decimal', pl: 2.5, py:0.5 }} {...props} />,
+    li: ({node, ...props}) => <ListItem sx={{ display: 'list-item', py: 0.2, px: 0 }} disableGutters {...props} />,
+    hr: ({node, ...props}) => <Divider sx={{ my: 1 }} {...props} />,
+    code: ({node, inline, className, children, ...props}) => {
+        // const match = /language-(\w+)/.exec(className || '');
+        return !inline ? ( // Code block
+            <Paper component="pre" elevation={0} variant="outlined" sx={{
+                p: 1.5,
+                my: 1,
+                overflow: 'auto',
+                bgcolor: (theme) => theme.palette.mode === 'dark' ? 'grey.900' : 'grey.100',
+                fontSize: '0.875rem',
+                fontFamily: 'monospace',
+                whiteSpace: 'pre-wrap', // Ensure long lines wrap
+                wordBreak: 'break-all', // Break long words/strings
+            }} {...props}>
+                <code>{children}</code>
+            </Paper>
+        ) : ( // Inline code
+            <Typography component="code" sx={{
+                fontFamily: 'monospace',
+                bgcolor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+                px: 0.5,
+                py: 0.25,
+                borderRadius: 1,
+                fontSize: '0.875rem'
+            }} {...props}>
+                {children}
+            </Typography>
+        );
+    },
+    pre: ({node, ...props}) => <Box {...props} />, // The 'code' component above handles <pre><code> styling
+    blockquote: ({node, ...props}) => (
+        <Box
+            component="blockquote"
+            sx={{
+                borderLeft: (theme) => `4px solid ${theme.palette.divider}`,
+                pl: 2,
+                ml: 0,
+                mr: 0,
+                my: 1.5,
+                fontStyle: 'italic',
+                color: 'text.secondary'
+            }}
+            {...props}
+        />
+    ),
+    // Add table, th, td, tr if needed, styling them with MUI Table components
+    table: ({node, ...props}) => <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse', my: 1.5, '& th, & td': { border: (theme) => `1px solid ${theme.palette.divider}`, p: 1, textAlign: 'left'}}} {...props} />,
+    thead: ({node, ...props}) => <Box component="thead" {...props} />,
+    tbody: ({node, ...props}) => <Box component="tbody" {...props} />,
+    tr: ({node, ...props}) => <Box component="tr" {...props} />,
+    th: ({node, ...props}) => <Box component="th" sx={{fontWeight: 'bold', bgcolor: 'action.hover'}} {...props} />,
+    td: ({node, ...props}) => <Box component="td" {...props} />,
+};
+
 
 const AgentRunner = ({ agentResourceName, agentFirestoreId, adkUserId }) => {
     const [message, setMessage] = useState('');
@@ -47,7 +119,7 @@ const AgentRunner = ({ agentResourceName, agentFirestoreId, adkUserId }) => {
                     timestamp: new Date()
                 };
                 setConversation(prev => [...prev, agentResponse]);
-                if (result.adkSessionId) { // Ensure backend returns adkSessionId
+                if (result.adkSessionId) {
                     setCurrentSessionId(result.adkSessionId);
                 }
             } else {
@@ -68,10 +140,8 @@ const AgentRunner = ({ agentResourceName, agentFirestoreId, adkUserId }) => {
 
     const handleResetSession = () => {
         setCurrentSessionId(null);
-        setConversation([]); // Optionally clear conversation
+        setConversation([]);
         setError(null);
-        // Optionally, show a Snackbar confirmation
-        // alert("Session reset. The next message will start a new conversation.");
     };
 
     const getAvatar = (type) => {
@@ -104,6 +174,7 @@ const AgentRunner = ({ agentResourceName, agentFirestoreId, adkUserId }) => {
                             display: 'flex',
                             flexDirection: entry.type === 'user' ? 'row-reverse' : 'row',
                             mb: 1,
+                            alignItems: 'flex-start', // Align avatar to top of message
                         }}>
                             {getAvatar(entry.type)}
                             <Paper
@@ -118,16 +189,43 @@ const AgentRunner = ({ agentResourceName, agentFirestoreId, adkUserId }) => {
                                     color: entry.type === 'user' ? 'primary.contrastText' :
                                         entry.type === 'agent' ? 'text.primary' :
                                             'error.contrastText',
-                                    maxWidth: '75%',
+                                    maxWidth: '80%', // Increased max width
                                     wordBreak: 'break-word',
                                 }}
                             >
                                 <ListItemText
-                                    primary={<Typography variant="body1">{entry.text}</Typography>}
-                                    secondary={<Typography variant="caption" sx={{ display: 'block', textAlign: entry.type === 'user' ? 'right' : 'left', mt: 0.5 }}>
-                                        {new Date(entry.timestamp).toLocaleTimeString()}
-                                        {entry.type === 'agent' && currentSessionId && ` (S: ...${currentSessionId.slice(-4)})`}
-                                    </Typography>}
+                                    disableTypography // Important when using ReactMarkdown or custom components inside
+                                    primary={
+                                        entry.type === 'agent' ? (
+                                            <ReactMarkdown
+                                                remarkPlugins={[remarkGfm]}
+                                                components={muiMarkdownComponents}
+                                            >
+                                                {entry.text}
+                                            </ReactMarkdown>
+                                        ) : entry.type === 'user' ? (
+                                            <Typography variant="body1">{entry.text}</Typography>
+                                        ) : ( // Error type
+                                            <Typography variant="body1" color="error.contrastText">{entry.text}</Typography>
+                                        )
+                                    }
+                                    secondary={
+                                        <Typography
+                                            variant="caption"
+                                            sx={{
+                                                display: 'block',
+                                                textAlign: entry.type === 'user' ? 'right' : 'left',
+                                                mt: 0.5,
+                                                color: entry.type === 'user' ? 'primary.contrastText' :
+                                                    entry.type === 'agent' ? 'text.secondary' :
+                                                        'error.contrastText',
+                                                opacity: entry.type === 'user' ? 0.8 : 1,
+                                            }}
+                                        >
+                                            {new Date(entry.timestamp).toLocaleTimeString()}
+                                            {entry.type === 'agent' && currentSessionId && ` (S: ...${currentSessionId.slice(-4)})`}
+                                        </Typography>
+                                    }
                                 />
                             </Paper>
                         </ListItem>
@@ -155,8 +253,10 @@ const AgentRunner = ({ agentResourceName, agentFirestoreId, adkUserId }) => {
                     onChange={(e) => setMessage(e.target.value)}
                     placeholder="Type your message to the agent..."
                     disabled={isLoading}
-                    onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) handleSendMessage(e);}}
+                    onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e);}}}
                     size="small"
+                    multiline // Allow multiline input
+                    maxRows={5} // Limit height
                 />
                 <Button
                     type="submit"
@@ -164,7 +264,7 @@ const AgentRunner = ({ agentResourceName, agentFirestoreId, adkUserId }) => {
                     color="primary"
                     disabled={isLoading || !message.trim()}
                     endIcon={<SendIcon />}
-                    sx={{ height: '100%' }} // Match TextField height
+                    sx={{ height: '100%', alignSelf: 'flex-end' }} // Align button to bottom with multiline TextField
                 >
                     Send
                 </Button>
@@ -174,6 +274,7 @@ const AgentRunner = ({ agentResourceName, agentFirestoreId, adkUserId }) => {
                         title="Reset Conversation Session"
                         color="warning"
                         disabled={isLoading}
+                        sx={{ alignSelf: 'flex-end' }} // Align button to bottom with multiline TextField
                     >
                         <RestartAltIcon />
                     </IconButton>
