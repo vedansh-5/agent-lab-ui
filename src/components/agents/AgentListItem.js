@@ -4,6 +4,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import { Card, CardContent, CardActions, Typography, Button, Chip, Box } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import DeleteIcon from '@mui/icons-material/Delete'; // Import DeleteIcon
 import { styled } from '@mui/material/styles';
 
 const StyledCard = styled(Card)(({ theme }) => ({
@@ -32,7 +33,15 @@ const getStatusChipColor = (status) => {
     }
 };
 
-const AgentListItem = ({ agent }) => {
+// Helper function to determine if the delete button should be shown
+const canDeleteAgentConfig = (status) => {
+    const nonDeletableStatuses = ['deployed', 'deploying_initiated', 'deploying_in_progress'];
+    return !status || !nonDeletableStatuses.includes(status);
+};
+
+const AgentListItem = ({ agent, onDeleteAgentConfig }) => { // Added onDeleteAgentConfig prop
+    const showDeleteButton = canDeleteAgentConfig(agent.deploymentStatus);
+
     return (
         <StyledCard>
             <CardContent>
@@ -64,7 +73,7 @@ const AgentListItem = ({ agent }) => {
                     {agent.description || "No description."}
                 </Typography>
             </CardContent>
-            <CardActions sx={{ justifyContent: 'flex-end', pt: 0, px:2, pb:2 }}>
+            <CardActions sx={{ justifyContent: 'flex-end', pt: 0, px:2, pb:2, gap: 1 }}> {/* Added gap for better spacing */}
                 <Button
                     size="small"
                     variant="outlined"
@@ -85,6 +94,17 @@ const AgentListItem = ({ agent }) => {
                 >
                     Edit
                 </Button>
+                {showDeleteButton && onDeleteAgentConfig && ( // Check for onDeleteAgentConfig existence
+                    <Button
+                        size="small"
+                        variant="outlined"
+                        color="error"
+                        onClick={() => onDeleteAgentConfig(agent)} // Pass the whole agent object
+                        startIcon={<DeleteIcon />}
+                    >
+                        Delete
+                    </Button>
+                )}
             </CardActions>
         </StyledCard>
     );
