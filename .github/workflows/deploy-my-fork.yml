@@ -15,12 +15,8 @@ on:
 
 jobs:
   build_and_deploy_fork:
-    # Define environment variables at the job level for checking secrets
-    env:
-      # Map the FIREBASE_CONFIG_JSON secret to an env var for the job's 'if' condition
-      FIREBASE_CONFIG_JSON_CONTENT: ${{ secrets.FIREBASE_CONFIG_JSON }}
-    # The job runs only if FIREBASE_CONFIG_JSON_CONTENT (derived from the secret) is not empty
-    if: ${{ env.FIREBASE_CONFIG_JSON_CONTENT != '' }}
+    # No 'if' condition at the job level checking for secrets.
+    # The job will always attempt to run if manually dispatched.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout specific branch from fork
@@ -30,29 +26,28 @@ jobs:
 
       - name: Create Firebase Config file and Extract Project ID
         id: setup_firebase
-        # FIREBASE_CONFIG_JSON_CONTENT is already available as a job-level env var
+        env:
+          # Pass the secret as an environment variable for safer handling in the script
+          FIREBASE_CONFIG_JSON_FROM_SECRET: ${{ secrets.FIREBASE_CONFIG_JSON }}
         run: |
           echo "Attempting to create firebaseConfig.json and extract projectId..."
-          # The job 'if' condition already ensured FIREBASE_CONFIG_JSON_CONTENT is not empty.
-          if [ -z "$FIREBASE_CONFIG_JSON_CONTENT" ]; then
-            echo "Error: FIREBASE_CONFIG_JSON_CONTENT is unexpectedly empty. This shouldn't happen if job 'if' worked."
+          if [ -z "$FIREBASE_CONFIG_JSON_FROM_SECRET" ]; then
+            echo "::error title=Missing Secret::FIREBASE_CONFIG_JSON secret is not set in this fork's GitHub Actions secrets. Please configure it in Settings > Secrets and variables > Actions."
             exit 1
           fi
 
           mkdir -p src # Ensure the src directory exists
-          echo "$FIREBASE_CONFIG_JSON_CONTENT" > src/firebaseConfig.json
+          echo "$FIREBASE_CONFIG_JSON_FROM_SECRET" > src/firebaseConfig.json
 
-          PROJECT_ID_VALUE=$(echo "$FIREBASE_CONFIG_JSON_CONTENT" | jq -r .projectId)
+          PROJECT_ID_VALUE=$(echo "$FIREBASE_CONFIG_JSON_FROM_SECRET" | jq -r .projectId)
 
           if [ -z "$PROJECT_ID_VALUE" ] || [ "$PROJECT_ID_VALUE" == "null" ]; then
-            echo "Error: projectId not found or is null in FIREBASE_CONFIG_JSON."
+            echo "::error title=Invalid Config::projectId not found or is null in FIREBASE_CONFIG_JSON. Ensure the secret contains valid Firebase web config JSON with a 'projectId' field."
             exit 1
           fi
           echo "Extracted PROJECT_ID: ${PROJECT_ID_VALUE}"
-          # Set PROJECT_ID as a job-level environment variable for subsequent steps
           echo "PROJECT_ID=${PROJECT_ID_VALUE}" >> $GITHUB_ENV
-          # Also set it as a step output if needed by other jobs (not applicable here, but good practice)
-          echo "project_id_extracted=${PROJECT_ID_VALUE}" >> $GITHUB_OUTPUT
+          echo "project_id_extracted=${PROJECT_ID_VALUE}" >> $GITHUB_OUTPUT # For potential future use if needed
         shell: bash
 
       - name: Install Dependencies and Build
@@ -61,20 +56,12 @@ jobs:
           npm run build
 
       - name: Deploy to My Firebase Hosting
-        # Define environment variables at the step level for checking this specific secret
-        env:
-          # Map the FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI secret to an env var for this step's 'if'
-          FIREBASE_SERVICE_ACCOUNT_CONTENT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI }}
-        # This step runs if:
-        # 1. FIREBASE_SERVICE_ACCOUNT_CONTENT (from secret) is not empty.
-        # 2. env.PROJECT_ID (from previous step, now a job-level env var) is not empty.
-        # 3. steps.setup_firebase.outputs.project_id_extracted (step output) is not empty.
-        if: ${{ env.FIREBASE_SERVICE_ACCOUNT_CONTENT != '' && env.PROJECT_ID != '' && steps.setup_firebase.outputs.project_id_extracted != '' }}
+        # No 'if' condition at the step level checking for secrets.
+        # The action will fail if firebaseServiceAccount is missing or projectId is invalid.
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          # The action itself needs the raw secret content
+          # The action requires these secrets. If they are not set in the fork, the action will fail.
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI }}'
           channelId: ${{ github.event.inputs.channelId }}
-          projectId: ${{ env.PROJECT_ID }}
-          
+          projectId: ${{ env.PROJECT_ID }} # Relies on PROJECT_ID being correctly set by the previous step  
