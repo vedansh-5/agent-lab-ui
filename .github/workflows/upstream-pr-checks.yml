@@ -1,0 +1,46 @@
+# .github/workflows/upstream-pr-checks.yml
+name: Upstream PR Checks
+
+on:
+  pull_request:
+    branches: # Assuming 'main' is the primary branch PRs target in upstream
+      - main
+      # Add other protected branches if necessary
+
+jobs:
+  lint_and_test: # Example job: Add your actual linting/testing commands
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }} # Checkout the specific PR commit
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18' # Specify your project's Node.js version
+
+      - name: Install Dependencies
+        run: npm install
+
+        # - name: Create DUMMY Firebase Config for Build (if build requires it)
+        #   # If your 'npm run build' strictly requires src/firebaseConfig.json to exist,
+        #   # even if its values are not used for a non-deploying build check, create a dummy.
+        #   # Otherwise, omit this step if the build can proceed or skip Firebase-dependent parts.
+        #   run: |
+        #     mkdir -p src
+        #     echo '{ "apiKey": "dummy", "authDomain": "dummy", "projectId": "dummy" }' > src/firebaseConfig.json
+
+      - name: Run Linter (Example)
+        run: npm run lint # Replace with your actual lint command
+
+      - name: Run Tests (Example)
+        run: npm test # Replace with your actual test command
+
+      # - name: Build Check (Optional - if it doesn't need live Firebase config)
+      #   # This step is only useful if 'npm run build' can complete without
+      #   # live Firebase credentials or if you created a dummy firebaseConfig.json above.
+      #   run: npm run build
+
+      # NO DEPLOYMENT STEPS HERE
