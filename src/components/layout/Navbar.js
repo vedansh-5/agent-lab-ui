@@ -69,7 +69,7 @@ const Navbar = () => {
                     to="/"
                     sx={{ flexGrow: 1, color: 'inherit', textDecoration: 'none' }}
                 >
-                    AgentWebUI {/* You could make this dynamic via theme.customBranding.appName */}
+                    AgentLabUI {/* You could make this dynamic via theme.customBranding.appName */}
                 </Typography>
 
                 {/* Theme Selector Dropdown Example */}

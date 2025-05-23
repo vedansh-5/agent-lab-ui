@@ -5,14 +5,8 @@ from firebase_admin import firestore
 from firebase_functions import https_fn
 from google.cloud.aiplatform_v1beta1 import ReasoningEngineServiceClient
 from google.cloud.aiplatform_v1beta1.types import ReasoningEngine as ReasoningEngineProto
-from vertexai import agent_engines as deployed_agent_engines
+from vertexai import agent_engines as deployed_agent_engines # Specific import
 from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent
-# Import BuiltInCodeExecutor
-try:
-    from google.adk.code_executors import BuiltInCodeExecutor
-except ImportError:
-    # This was already logged in adk_helpers, but good to have a fallback here too
-    BuiltInCodeExecutor = None
 from google.adk.sessions import VertexAiSessionService
 
 from common.core import db, logger
@@ -25,6 +19,9 @@ from common.adk_helpers import (
     instantiate_adk_agent_from_config
 )
 
+# Note: Authentication checks (if req.auth) are expected to be handled by the
+# https_fn.on_call wrapper in main.py, or can be added here if these logic
+# functions might be called directly in other contexts.
 
 def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
     agent_config_data = req.data.get("agentConfig")
@@ -38,16 +35,18 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
 
     logger.info(f"Initiating deployment for agent '{agent_doc_id}'. Config keys: {list(agent_config_data.keys())}")
 
+    # Update Firestore status to 'deploying_initiated'
     try:
         db.collection("agents").document(agent_doc_id).update({
             "deploymentStatus": "deploying_initiated",
             "lastDeploymentAttemptAt": firestore.SERVER_TIMESTAMP,
-            "vertexAiResourceName": firestore.DELETE_FIELD,
-            "deploymentError": firestore.DELETE_FIELD,
-            "lastDeployedAt": firestore.DELETE_FIELD
+            "vertexAiResourceName": firestore.DELETE_FIELD, # Clear old one
+            "deploymentError": firestore.DELETE_FIELD,    # Clear old error
+            "lastDeployedAt": firestore.DELETE_FIELD      # Clear old success time
         })
         logger.info(f"Agent '{agent_doc_id}' status in Firestore set to 'deploying_initiated'.")
     except Exception as e:
+        # This is a critical failure if we can't even update Firestore before starting.
         logger.error(f"CRITICAL: Failed to update agent '{agent_doc_id}' status to 'deploying_initiated' "
                      f"before deployment attempt: {e}. Aborting deployment.")
         raise https_fn.HttpsError(
@@ -55,7 +54,7 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
             message=f"Failed to set initial deployment status in Firestore for agent {agent_doc_id}. Deployment aborted."
         )
 
-    initialize_vertex_ai()
+    initialize_vertex_ai() # Ensures Vertex AI SDK is ready
 
     agent_type_str = agent_config_data.get("agentType")
     AgentClass = {
@@ -68,11 +67,12 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
         logger.error(error_msg)
         db.collection("agents").document(agent_doc_id).update({
             "deploymentStatus": "error", "deploymentError": error_msg,
-            "lastDeployedAt": firestore.SERVER_TIMESTAMP
+            "lastDeployedAt": firestore.SERVER_TIMESTAMP # Mark time of this failed attempt
         })
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message=error_msg)
 
     parent_agent_name_str = agent_config_data.get("name", f"default_agent_name_{agent_doc_id}")
+    # Sanitize the user-provided name for use as the ADK agent's internal 'name' property
     parent_adk_name = sanitize_adk_agent_name(parent_agent_name_str, prefix_if_needed=f"agent_{agent_doc_id}_")
     agent_description = agent_config_data.get("description")
 
@@ -85,23 +85,13 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
         except ValueError as e:
             logger.warning(f"Skipping tool for parent agent '{parent_adk_name}' due to error: {e}")
 
-            # Determine executors for the main/parent agent or looped agent
-    agent_executors = []
-    if agent_config_data.get("enableCodeExecution"): # This field comes from AgentForm's main config
-        if BuiltInCodeExecutor:
-            agent_executors.append(BuiltInCodeExecutor)
-            logger.info(f"BuiltInCodeExecutor enabled for agent '{parent_adk_name}'.")
-        else:
-            logger.warn(f"Agent '{parent_adk_name}' requested code execution, but BuiltInCodeExecutor could not be imported. Skipping executor.")
-            # Optionally update Firestore with a warning or prevent deployment if critical
 
-    if AgentClass == Agent: # Agent is an LlmAgent
+    if AgentClass == Agent:
         adk_agent = Agent(
             **common_args_for_parent,
             model=agent_config_data.get("model", "gemini-1.5-flash-001"),
             instruction=agent_config_data.get("instruction"),
-            tools=instantiated_parent_tools,
-            executor=agent_executors if agent_executors else None # Pass executors
+            tools=instantiated_parent_tools
         )
     elif AgentClass == SequentialAgent or AgentClass == ParallelAgent:
         child_agent_configs = agent_config_data.get("childAgents", [])
@@ -115,53 +105,54 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
             instantiate_adk_agent_from_config(child_config, parent_adk_name_for_context=parent_adk_name, child_index=idx)
             for idx, child_config in enumerate(child_agent_configs)
         ]
-        # Orchestrator agents (Sequential, Parallel) typically don't use executors or tools themselves.
-        # Their sub-agents do. So, 'agent_executors' and 'instantiated_parent_tools' are NOT passed here.
         adk_agent = AgentClass(**common_args_for_parent, sub_agents=instantiated_child_agents)
-
     elif AgentClass == LoopAgent:
+        # For LoopAgent, the 'instruction' and 'tools' from the main config apply to the looped agent.
         loop_child_adk_name = sanitize_adk_agent_name(f"{parent_adk_name}_looped_child", prefix_if_needed="looped_")
-        looped_child_agent_instance = Agent( # This is an LlmAgent
+        looped_child_agent_instance = Agent(
             name=loop_child_adk_name,
             model=agent_config_data.get("model", "gemini-1.5-flash-001"),
             instruction=agent_config_data.get("instruction"),
-            tools=instantiated_parent_tools, # Tools are for the agent being looped
-            executor=agent_executors if agent_executors else None # Executors are for the agent being looped
+            tools=instantiated_parent_tools # Tools are for the agent being looped
         )
         max_loops_val = int(agent_config_data.get("maxLoops", 3))
-        # LoopAgent itself doesn't use the main tools/executor list directly from common_args_for_parent
-        adk_agent = LoopAgent(name=common_args_for_parent["name"],
-                              description=common_args_for_parent.get("description"),
-                              agent=looped_child_agent_instance,
-                              max_loops=max_loops_val)
-
+        adk_agent = LoopAgent(**common_args_for_parent, agent=looped_child_agent_instance, max_loops=max_loops_val)
 
     if adk_agent is None:
+        # This should ideally be caught by previous checks, but as a safeguard:
         error_msg = f"ADK Agent object could not be constructed for agent '{agent_doc_id}' with type '{agent_type_str}'."
         logger.error(error_msg)
         db.collection("agents").document(agent_doc_id).update({"deploymentStatus": "error", "deploymentError": error_msg})
-        raise ValueError(error_msg)
+        raise ValueError(error_msg) # This will be caught by the decorator
 
     logger.info(f"ADK Agent object '{adk_agent.name}' of type {AgentClass.__name__} prepared for deployment.")
 
-    requirements_list = ["google-cloud-aiplatform[adk,agent_engines]>=1.93.0", "gofannon"]
+    # Define requirements for the ADK deployment package
+    # Ensure gofannon is available if Gofannon tools are used, and the ADK version is compatible.
+    requirements_list = ["google-cloud-aiplatform[adk,agent_engines]>=1.93.0", "gofannon"] # Adjust as needed
+
+    # Generate the display name for Vertex AI Reasoning Engine
+    # Use the original user-provided name from config for better readability in Vertex AI Console
     config_name_for_display = agent_config_data.get("name", agent_doc_id)
     deployment_display_name = generate_vertex_deployment_display_name(config_name_for_display, agent_doc_id)
 
     logger.info(f"Attempting to deploy ADK agent '{adk_agent.name}' to Vertex AI with display_name: '{deployment_display_name}'.")
 
     try:
+        # This is the potentially long-running call to Vertex AI
         remote_app = deployed_agent_engines.create(
             agent_engine=adk_agent,
             requirements=requirements_list,
             display_name=deployment_display_name,
-            description=agent_config_data.get("description", f"ADK Agent deployed via AgentWebUI: {deployment_display_name}")
+            description=agent_config_data.get("description", f"ADK Agent deployed via AgentLabUI: {deployment_display_name}")
+            # location can be specified if not default from vertexai.init()
         )
+        # If create() completes successfully within the Cloud Function timeout
         logger.info(f"Vertex AI agent deployment successful (create call returned) for '{agent_doc_id}'. "
                     f"Resource name: {remote_app.resource_name}, Display name: '{deployment_display_name}'.")
         db.collection("agents").document(agent_doc_id).update({
             "vertexAiResourceName": remote_app.resource_name,
-            "deploymentStatus": "deployed",
+            "deploymentStatus": "deployed", # Or 'deploying_in_progress' if create is async and needs polling
             "lastDeployedAt": firestore.SERVER_TIMESTAMP,
             "deploymentError": firestore.DELETE_FIELD
         })
@@ -169,23 +160,33 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
                 "message": f"Agent deployment for '{deployment_display_name}' initiated and confirmed completed by Vertex AI."}
 
     except Exception as e:
+        # This block handles errors from adk_agent instantiation (if not caught earlier)
+        # OR errors from deployed_agent_engines.create() if it fails relatively quickly
+        # (e.g., bad ADK config, permissions issues, immediate Vertex AI rejection).
+        # If the Cloud Function times out during the .create() call, this block is NOT hit for the timeout itself.
+        # The client would receive a DEADLINE_EXCEEDED error from Firebase Functions.
+        # Firestore status would remain 'deploying_initiated', and polling from client would be needed.
+
         tb_str = traceback.format_exc()
         error_message_for_log = f"Error during Vertex AI agent deployment for '{agent_doc_id}' (ADK name: '{adk_agent.name}', Display: '{deployment_display_name}'): {str(e)}"
         logger.error(f"{error_message_for_log}\n{tb_str}")
 
+        # Update Firestore to 'error' because the deployment call itself failed or setup failed.
         db.collection("agents").document(agent_doc_id).update({
             "deploymentStatus": "error",
-            "deploymentError": str(e)[:1000],
-            "lastDeployedAt": firestore.SERVER_TIMESTAMP
+            "deploymentError": str(e)[:1000], # Store a snippet of the error
+            "lastDeployedAt": firestore.SERVER_TIMESTAMP # Mark time of this failed attempt
         })
 
-        if isinstance(e, https_fn.HttpsError):
+        if isinstance(e, https_fn.HttpsError): # Re-raise if already an HttpsError
             raise
+            # Specific error checks for user-friendly messages
         if "validation error" in str(e).lower() and "pydantic" in str(e).lower():
             raise https_fn.HttpsError(
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
                 message=f"Agent configuration validation failed: {str(e)[:300]}. Check agent names and other parameters."
             )
+            # General internal error for other exceptions
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INTERNAL,
             message=f"Deployment to Vertex AI failed: {str(e)[:300]}"

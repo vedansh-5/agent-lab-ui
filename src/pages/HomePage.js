@@ -15,7 +15,7 @@ const HomePage = () => {
 
     // Example of using a custom property from the theme
     const welcomeMessage = theme.customBranding?.welcomeMessage || "Rapidly prototype and deploy AI agents with Google ADK and Gofannon.";
-    const appName = theme.customBranding?.appName || "AgentWebUI";
+    const appName = theme.customBranding?.appName || "AgentLabUI";
 
 
     return (
