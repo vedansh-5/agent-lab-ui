@@ -1,7 +1,7 @@
 // src/App.js
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Link as RouterLink } from 'react-router-dom';
-import { AuthProvider } from './contexts/AuthContext';
+import { BrowserRouter as Router, Routes, Route, Link as RouterLink} from 'react-router-dom'; // Added Navigate
+import { AuthProvider } from './contexts/AuthContext'; // Added useAuth
 import { CustomThemeProvider } from './contexts/ThemeContext';
 
 import Navbar from './components/layout/Navbar';
@@ -10,18 +10,32 @@ import DashboardPage from './pages/DashboardPage';
 import CreateAgentPage from './pages/CreateAgentPage';
 import AgentPage from './pages/AgentPage';
 import SettingsPage from './pages/SettingsPage';
-import ProtectedRoute from './components/routing/ProtectedRoute'; // Updated import
-import PlatformUnderConstructionPage from './pages/PlatformUnderConstructionPage'; // New Import
+import ProtectedRoute from './components/routing/ProtectedRoute';
+import AdminPage from './pages/AdminPage'; // New
+import UnauthorizedPage from './pages/UnauthorizedPage'; // New
 
 // MUI Imports for App Layout
 import { Box, Container, Typography, Link as MuiLink } from '@mui/material';
-// import { useTheme } from '@mui/material/styles'; // No longer directly used here for theme
+
+
+// AdminRoute component (can be defined here or in a separate file)
+// Using the enhanced ProtectedRoute instead.
+// function AdminRoute({ children }) {
+//     const { currentUser, loading } = useAuth();
+
+//     if (loading) {
+//         return <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh"><LoadingSpinner /></Box>;
+//     }
+//     // ProtectedRoute will handle !currentUser and !isAuthorized
+//     // We just need to check for isAdmin here, assuming ProtectedRoute already granted basic access
+//     if (!currentUser?.permissions?.isAdmin) {
+//         return <Navigate to="/dashboard" replace />; // Or /unauthorized
+//     }
+//     return children;
+// }
 
 
 function AppContent() {
-    // eslint-disable-next-line
-    // const theme = useTheme(); // No longer needed here
-
     return (
         <>
             <Navbar />
@@ -35,6 +49,9 @@ function AppContent() {
             >
                 <Routes>
                     <Route path="/" element={<HomePage />} />
+                    <Route path="/unauthorized" element={<UnauthorizedPage />} />
+
+                    {/* Protected Routes */}
                     <Route
                         path="/dashboard"
                         element={<ProtectedRoute><DashboardPage /></ProtectedRoute>}
@@ -56,9 +73,15 @@ function AppContent() {
                         element={<ProtectedRoute><SettingsPage /></ProtectedRoute>}
                     />
                     <Route
-                        path="/platform-under-construction/:platformId"
-                        element={<ProtectedRoute><PlatformUnderConstructionPage /></ProtectedRoute>}
+                        path="/admin"
+                        element={
+                            <ProtectedRoute requireAdmin={true}>
+                                <AdminPage />
+                            </ProtectedRoute>
+                        }
                     />
+
+                    {/* 404 Not Found */}
                     <Route path="*" element={
                         <Box textAlign="center" py={10}>
                             <Typography variant="h3" component="h1" gutterBottom>
