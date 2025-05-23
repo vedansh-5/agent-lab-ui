@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom'; // Added useNavigate
 import { useAuth } from '../contexts/AuthContext';
 import { getUserAgents, deleteAgentFromFirestore } from '../services/firebaseService';
 import { deleteAgentDeployment } from '../services/agentService'; // Import deleteAgentDeployment
@@ -7,15 +7,20 @@ import AgentList from '../components/agents/AgentList';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
 
+import PlatformSelectionDialog from '../components/agents/PlatformSelectionDialog'; // New import
+import { PLATFORM_IDS } from '../constants/platformConstants'; // New import
+
 import { Box, Typography, Button, Container, Fab, Paper, CircularProgress } from '@mui/material'; // Added CircularProgress
 import AddIcon from '@mui/icons-material/Add';
 
 const DashboardPage = () => {
     const { currentUser } = useAuth();
+    const navigate = useNavigate(); // New
     const [agents, setAgents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [deletingAgentId, setDeletingAgentId] = useState(null); // To show spinner on specific item or general
     const [error, setError] = useState(null);
+    const [isPlatformDialogOpen, setIsPlatformDialogOpen] = useState(false); // New state
 
     useEffect(() => {
         if (currentUser) {
@@ -75,6 +80,27 @@ const DashboardPage = () => {
         }
     };
 
+    const handleOpenPlatformDialog = () => { // New handler
+        setIsPlatformDialogOpen(true);
+    };
+
+    const handleClosePlatformDialog = () => { // New handler
+        setIsPlatformDialogOpen(false);
+    };
+
+    const handlePlatformSelected = (platform) => { // New handler
+        setIsPlatformDialogOpen(false);
+        if (platform.id === PLATFORM_IDS.GOOGLE_VERTEX) {
+            // Pass platform information to CreateAgentPage via state
+            navigate('/create-agent', { state: { platformId: platform.id } });
+        } else if (!platform.isConstructed) {
+            navigate(`/platform-under-construction/${platform.id}`);
+        } else {
+            // Handle other constructed platforms if any in the future
+            console.warn("Selected platform is marked constructed but no route defined:", platform.name);
+        }
+    };
+
 
     if (loading && agents.length === 0) return <Box display="flex" justifyContent="center" py={5}><LoadingSpinner /></Box>;
     // ErrorMessage is already MUI-styled
@@ -88,8 +114,7 @@ const DashboardPage = () => {
                 <Button
                     variant="contained"
                     color="primary"
-                    component={RouterLink}
-                    to="/create-agent"
+                    onClick={handleOpenPlatformDialog} // Changed from RouterLink
                     startIcon={<AddIcon />}
                 >
                     Create New Agent
@@ -123,8 +148,7 @@ const DashboardPage = () => {
             <Fab
                 color="primary"
                 aria-label="add agent"
-                component={RouterLink}
-                to="/create-agent"
+                onClick={handleOpenPlatformDialog} // Changed from RouterLink
                 sx={{
                     position: 'fixed',
                     bottom: (theme) => theme.spacing(3),
@@ -134,8 +158,14 @@ const DashboardPage = () => {
             >
                 <AddIcon />
             </Fab>
+
+            <PlatformSelectionDialog
+                open={isPlatformDialogOpen}
+                onClose={handleClosePlatformDialog}
+                onSelectPlatform={handlePlatformSelected}
+            />
         </Container>
     );
 };
 
-export default DashboardPage;
+export default DashboardPage;  
