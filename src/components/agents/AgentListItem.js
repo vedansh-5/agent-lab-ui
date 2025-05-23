@@ -5,6 +5,7 @@ import { Card, CardContent, CardActions, Typography, Button, Chip, Box } from '@
 import EditIcon from '@mui/icons-material/Edit';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import DeleteIcon from '@mui/icons-material/Delete'; // Import DeleteIcon
+import { getPlatformById } from '../../constants/platformConstants'; // New Import
 import { styled } from '@mui/material/styles';
 
 const StyledCard = styled(Card)(({ theme }) => ({
@@ -41,6 +42,7 @@ const canDeleteAgentConfig = (status) => {
 
 const AgentListItem = ({ agent, onDeleteAgentConfig }) => { // Added onDeleteAgentConfig prop
     const showDeleteButton = canDeleteAgentConfig(agent.deploymentStatus);
+    const platformInfo = agent.platform ? getPlatformById(agent.platform) : null;
 
     return (
         <StyledCard>
@@ -48,12 +50,22 @@ const AgentListItem = ({ agent, onDeleteAgentConfig }) => { // Added onDeleteAge
                 <Typography variant="h5" component="h2" gutterBottom noWrap title={agent.name}>
                     {agent.name}
                 </Typography>
-                <Box sx={{ mb: 1 }}>
+                <Box sx={{ mb: 1, display: 'flex', gap: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
                     <Chip
                         label={agent.deploymentStatus?.replace(/_/g, ' ') || 'Not Deployed'}
                         color={getStatusChipColor(agent.deploymentStatus)}
                         size="small"
+                        sx={{ lineHeight: '1.3' }}
                     />
+                    {platformInfo && ( // New: Display Platform
+                        <Chip
+                            label={platformInfo.name}
+                            size="small"
+                            variant="outlined"
+                            title={`Platform: ${platformInfo.name}`}
+                            sx={{ lineHeight: '1.3' }}
+                        />
+                    )}
                 </Box>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                     Type: <Typography component="span" fontWeight="medium">{agent.agentType || 'Agent'}</Typography>

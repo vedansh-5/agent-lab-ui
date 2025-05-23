@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom'; // Added useLocation
 import AgentForm from '../components/agents/AgentForm';
 import { useAuth } from '../contexts/AuthContext';
 import { createAgentInFirestore, getAgentDetails, updateAgentInFirestore } from '../services/firebaseService';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
 import { Container, Typography, Box } from '@mui/material';
+import { PLATFORM_IDS, getPlatformById } from '../constants/platformConstants'; // For default platform and title
 
 const CreateAgentPage = ({ isEditMode = false }) => {
     const navigate = useNavigate();
+    const location = useLocation(); // New
     const { currentUser } = useAuth();
     const { agentId } = useParams();
 
@@ -29,10 +31,9 @@ const CreateAgentPage = ({ isEditMode = false }) => {
                         setInitialAgentData(null); // Clear any potentially stale data
                         return;
                     }
-                    // Ensure childAgents is an array, even if undefined in Firestore
-                    // Ensure maxLoops has a default if not present
                     setInitialAgentData({
                         ...agent,
+                        platform: agent.platform || PLATFORM_IDS.GOOGLE_VERTEX, // Default if old agent
                         childAgents: agent.childAgents || [],
                         maxLoops: agent.maxLoops || 3,
                     });
@@ -45,20 +46,30 @@ const CreateAgentPage = ({ isEditMode = false }) => {
             };
             fetchAgent();
         } else if (!isEditMode) {
-            // For new agent, provide default empty/initial values expected by AgentForm
+            const platformFromState = location.state?.platformId || PLATFORM_IDS.GOOGLE_VERTEX;
+            if (platformFromState !== PLATFORM_IDS.GOOGLE_VERTEX) {
+                // This case should not happen if routing is correct
+                setError(`Cannot create agent for platform ID "${platformFromState}" via this form. Please select Google Vertex AI.`);
+                setLoading(false);
+                // Optionally navigate back or show a more permanent error
+                // navigate('/dashboard');
+                return;
+            }
             setInitialAgentData({
                 name: '',
                 description: '',
                 agentType: 'Agent',
-                model: 'gemini-1.5-flash-001', // Default model from AgentForm constants
+                model: 'gemini-1.5-flash-001',
                 instruction: '',
                 tools: [],
                 maxLoops: 3,
                 childAgents: [],
+                platform: platformFromState, // Set platform for new agent
             });
             setLoading(false);
         }
-    }, [isEditMode, agentId, currentUser]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isEditMode, agentId, currentUser, navigate]); // location removed to prevent re-trigger on unrelated state changes
 
 
     const handleSaveAgent = async (agentData) => { // agentData now includes childAgents, maxLoops
@@ -70,11 +81,9 @@ const CreateAgentPage = ({ isEditMode = false }) => {
         setError(null);
         try {
             let newAgentId;
-            // Clean up client-side 'id' from childAgents before saving to Firestore,
-            // as Firestore generates its own IDs for subcollections if we ever go that route.
-            // For now, they are just part of the parent document.
             const finalAgentData = {
                 ...agentData,
+                platform: agentData.platform || (initialAgentData?.platform || PLATFORM_IDS.GOOGLE_VERTEX), // Ensure platform is set
                 childAgents: agentData.childAgents ? agentData.childAgents.map(ca => {
                     const { id, ...rest } = ca; // Remove client-side id
                     return rest;
@@ -87,6 +96,11 @@ const CreateAgentPage = ({ isEditMode = false }) => {
                 newAgentId = agentId;
                 alert("Agent updated successfully!");
             } else {
+                if (!finalAgentData.platform) {
+                    setError("Platform information is missing. Cannot create agent.");
+                    setIsSubmitting(false);
+                    return;
+                }
                 newAgentId = await createAgentInFirestore(currentUser.uid, finalAgentData);
                 alert("Agent created successfully!");
             }
@@ -101,20 +115,25 @@ const CreateAgentPage = ({ isEditMode = false }) => {
     };
 
     if (loading) return <Box display="flex" justifyContent="center" py={5}><LoadingSpinner /></Box>;
-    if (error && (isEditMode && !initialAgentData)) return <Container><ErrorMessage message={error} /></Container>;
-    if (isEditMode && !initialAgentData && !error) {
-        return <Box display="flex" justifyContent="center" py={5}><Typography>Loading agent data...</Typography></Box>;
-    }
+    if (error && (!initialAgentData || (isEditMode && !initialAgentData))) return <Container><ErrorMessage message={error} /></Container>;
+
     // Ensure initialAgentData is available before rendering AgentForm
     if (!initialAgentData) {
         // This case should ideally be covered by loading or error states
-        return <Box display="flex" justifyContent="center" py={5}><Typography>Preparing form...</Typography></Box>;
+        return <Box display="flex" justifyContent="center" py={5}><Typography>Loading agent data or preparing form...</Typography></Box>;
     }
+
+    const pageTitlePlatformName = initialAgentData?.platform
+        ? (getPlatformById(initialAgentData.platform)?.name || 'Agent') // Use platform name from constants
+        : 'Agent'; // Fallback if platform somehow missing, though unlikely with new flow
 
     return (
         <Container maxWidth="md">
             <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 3 }}>
-                {isEditMode ? 'Edit Agent' : 'Create New Agent'}
+                {isEditMode ?
+                    `Edit ${pageTitlePlatformName} Agent` :
+                    `Create New ${pageTitlePlatformName} Agent`
+                }
             </Typography>
             {error && !isSubmitting && <ErrorMessage message={error} sx={{ mb: 2 }} />}
 
@@ -127,4 +146,4 @@ const CreateAgentPage = ({ isEditMode = false }) => {
     );
 };
 
-export default CreateAgentPage;
+export default CreateAgentPage;  

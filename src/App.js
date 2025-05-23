@@ -11,6 +11,7 @@ import CreateAgentPage from './pages/CreateAgentPage';
 import AgentPage from './pages/AgentPage';
 import SettingsPage from './pages/SettingsPage';
 import ProtectedRoute from './components/routing/ProtectedRoute'; // Updated import
+import PlatformUnderConstructionPage from './pages/PlatformUnderConstructionPage'; // New Import
 
 // MUI Imports for App Layout
 import { Box, Container, Typography, Link as MuiLink } from '@mui/material';
@@ -53,6 +54,10 @@ function AppContent() {
                     <Route
                         path="/settings"
                         element={<ProtectedRoute><SettingsPage /></ProtectedRoute>}
+                    />
+                    <Route
+                        path="/platform-under-construction/:platformId"
+                        element={<ProtectedRoute><PlatformUnderConstructionPage /></ProtectedRoute>}
                     />
                     <Route path="*" element={
                         <Box textAlign="center" py={10}>

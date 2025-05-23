@@ -1,15 +1,24 @@
 // src/components/agents/AgentDetailsDisplay.js
 import React from 'react';
-import { Typography, Paper, List, ListItem, ListItemText, Box } from '@mui/material';
+import { Typography, Paper, List, ListItem, ListItemText, Box, Chip } from '@mui/material'; // Added Chip
 import LoopIcon from '@mui/icons-material/Loop';
+import { getPlatformById } from '../../constants/platformConstants'; // New Import
 
 const AgentDetailsDisplay = ({ agent }) => {
     if (!agent) return null;
 
     const showParentConfigDisplay = agent.agentType === 'Agent' || agent.agentType === 'LoopAgent';
+    const platformInfo = agent.platform ? getPlatformById(agent.platform) : null;
 
     return (
         <>
+            {platformInfo && ( // New: Display Platform
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, display: 'flex', alignItems: 'center' }}>
+                    Platform:&nbsp;
+                    <Chip label={platformInfo.name} size="small" variant="outlined" />
+                </Typography>
+            )}
+
             <Typography variant="subtitle1" fontWeight="medium">Description:</Typography>
             <Typography variant="body2" color="text.secondary" paragraph>{agent.description || "N/A"}</Typography>
 
@@ -68,4 +77,4 @@ const AgentDetailsDisplay = ({ agent }) => {
     );
 };
 
-export default AgentDetailsDisplay;
+export default AgentDetailsDisplay;  
