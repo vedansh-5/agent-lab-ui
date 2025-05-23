@@ -1,30 +1,30 @@
 import React from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { useThemeSwitcher } from '../../contexts/ThemeContext'; // For theme selection UI
+import { useThemeSwitcher } from '../../contexts/ThemeContext';
 
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings'; // For Admin link
 
 import IconButton from '@mui/material/IconButton';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
-import Brightness4Icon from '@mui/icons-material/Brightness4'; // For theme toggle example
+import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import AccountCircle from '@mui/icons-material/AccountCircle';
-import { useTheme } from '@mui/material/styles'; // To get current theme for icon
+import { useTheme } from '@mui/material/styles';
 
 const Navbar = () => {
     const { currentUser, logout } = useAuth();
     const { selectTheme, currentThemeKey } = useThemeSwitcher();
     const navigate = useNavigate();
-    const muiTheme = useTheme(); // MUI theme object
+    const muiTheme = useTheme();
 
     const [anchorEl, setAnchorEl] = React.useState(null);
     const [themeMenuAnchorEl, setThemeMenuAnchorEl] = React.useState(null);
-
 
     const handleMenu = (event) => {
         setAnchorEl(event.currentTarget);
@@ -45,9 +45,6 @@ const Navbar = () => {
     const handleSelectTheme = (themeKey) => {
         selectTheme(themeKey);
         handleThemeMenuClose();
-        // Optionally, force a reload if some components don't react dynamically enough,
-        // or if the theme change affects things outside React's direct control.
-        // window.location.reload();
     };
 
     const handleLogout = async () => {
@@ -69,10 +66,9 @@ const Navbar = () => {
                     to="/"
                     sx={{ flexGrow: 1, color: 'inherit', textDecoration: 'none' }}
                 >
-                    AgentLabUI {/* You could make this dynamic via theme.customBranding.appName */}
+                    {muiTheme.customBranding?.appName || 'AgentLabUI'}
                 </Typography>
 
-                {/* Theme Selector Dropdown Example */}
                 <Button
                     aria-controls="theme-menu"
                     aria-haspopup="true"
@@ -94,9 +90,9 @@ const Navbar = () => {
                     <MenuItem onClick={() => handleSelectTheme('clientB')}>Client B</MenuItem>
                 </Menu>
 
-
                 {currentUser ? (
                     <>
+
                         <Button color="inherit" component={RouterLink} to="/dashboard">
                             Dashboard
                         </Button>
@@ -126,7 +122,17 @@ const Navbar = () => {
                             onClose={handleClose}
                         >
                             <MenuItem component={RouterLink} to="/settings" onClick={handleClose}>Settings</MenuItem>
-                            <MenuItem onClick={handleLogout}>Logout ({currentUser.displayName || currentUser.email.split('@')[0]})</MenuItem>
+                            {currentUser.permissions?.isAdmin && ( // Check for admin permission
+                                <MenuItem
+                                    component={RouterLink}
+                                    to="/admin"
+                                    onClick={handleClose}
+                                >
+                                    <AdminPanelSettingsIcon sx={{ mr: 1 }} fontSize="small" />
+                                    Admin Panel
+                                </MenuItem>
+                            )}
+                            <MenuItem onClick={handleLogout}>Logout ({currentUser.displayName || currentUser.email?.split('@')[0]})</MenuItem>
                         </Menu>
                     </>
                 ) : (

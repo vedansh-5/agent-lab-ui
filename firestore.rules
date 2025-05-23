@@ -1,42 +1,114 @@
 rules_version = '2';  
 service cloud.firestore {  
   match /databases/{database}/documents {  
-    // Users can only read/write their own profile data  
-    match /users/{userId} {  
-      allow read, write: if request.auth.uid == userId;  
-    }  
 
-    // Agents:  
-    // - Users can create agents.  
-    // - Owners can read, update, delete their agents.  
-    // - (Future: implement sharing logic here)  
-    match /agents/{agentId} {  
-      allow create: if request.auth.uid != null;  
-      allow read, update, delete: if request.auth.uid == resource.data.userId;  
-      // Allow listing by user (dashboard)  
-      allow list: if request.auth.uid != null && request.query.filters[0][2] == request.auth.uid;  
-    }  
+    // --- Users Collection ---
+    match /users/{userId} {
+      // Helper function to check if the requester is an admin
+      function isAdmin() {
+        return request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.isAdmin == true;
+      }
 
-    // Agent Runs:  
-    // - Owners of the agent can create runs for that agent.  
-    // - Owners can read their agent's runs.  
-    match /agents/{agentId}/runs/{runId} {  
-      allow create: if request.auth.uid != null && get(/databases/$(database)/documents/agents/$(agentId)).data.userId == request.auth.uid;  
-      allow read: if request.auth.uid == get(/databases/$(database)/documents/agents/$(agentId)).data.userId;  
-      // Allow listing by agentId for the owner  
-      allow list: if request.auth.uid != null && get(/databases/$(database)/documents/agents/$(agentId)).data.userId == request.auth.uid;  
-    }  
+      // User can read their own profile. Admin can read any user's profile.
+      allow get: if request.auth.uid == userId || isAdmin();
 
-    // Gofannon Tool Manifest - anyone authenticated can read  
-    match /gofannonToolManifest/{docId} {  
-      allow read: if request.auth.uid != null;  
-      // Only admin/specific function can write  
-      allow write: if false; // To be updated if an admin function updates this  
-    }  
+      // Admin can list all user profiles (for AdminPage).
+      // Note: getUsersForAdminReview fetches all then filters client-side.
+      // For large user bases, consider server-side filtering if performance degrades.
+      allow list: if isAdmin();
 
-    // User specific API keys or settings (future)  
-    match /userSettings/{userId} {  
-      allow read, write: if request.auth.uid == userId;  
-    }  
-  }  
-}  
+      // User can create their own profile document (on first login).
+      // Ensure they are not trying to set permissions for themselves during creation.
+      allow create: if request.auth.uid == userId &&
+                       !("permissions" in request.resource.data); // Prevent setting permissions on self-create
+
+      // User can update specific fields of their own profile.
+      // Admin can update any user's 'permissions' and 'permissionsLastUpdatedAt' fields.
+      allow update: if request.auth.uid == userId &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'email', 'displayName', 'photoURL', 'updatedAt']) // Added 'updatedAt' if you track it
+                    || // OR
+                    isAdmin() &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasAny(['permissions', 'permissionsLastUpdatedAt']);
+                       // To be more strict, admins should ONLY be able to update permissions and related fields:
+                       // request.resource.data.diff(resource.data).affectedKeys().hasOnly(['permissions', 'permissionsLastUpdatedAt']);
+
+      // Generally, users should not delete their own profiles through the app. Admins might.
+      allow delete: if isAdmin(); // Or 'if false;' if no direct profile deletion is intended
+    }
+
+    // --- Agents Collection ---
+    match /agents/{agentId} {
+      // User must be authenticated to create an agent.
+      // Check if user has 'canCreateAgent' permission.
+      function canCreateAgent() {
+        return request.auth != null &&
+               exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.canCreateAgent == true;
+      }
+
+      allow create: if canCreateAgent();
+
+      // Owner can read, update, delete their agents.
+      // Admin can also read/update/delete any agent (for moderation, support).
+      function isOwner(docData) {
+        return request.auth.uid == docData.userId;
+      }
+      function isAdmin() { // Re-declared for local scope if needed, or use a global function
+        return request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.isAdmin == true;
+      }
+
+      allow read, update, delete: if isOwner(resource.data) || isAdmin();
+
+      // Allow listing by user for their own dashboard.
+      // Ensure the query from client-side is 'where("userId", "==", request.auth.uid)'
+      allow list: if request.auth.uid != null &&
+                     request.query.resource.__name__[0] == 'projects' && // General sanity check for collection query
+                     request.query.filters.size() > 0 &&
+                     request.query.filters[0].fieldPath == "userId" &&
+                     request.query.filters[0].op == "==" &&
+                     request.query.filters[0].value == request.auth.uid;
+    }
+
+    // --- Agent Runs Subcollection ---
+    match /agents/{agentId}/runs/{runId} {
+      function isAgentOwner() {
+        return request.auth.uid != null &&
+               exists(/databases/$(database)/documents/agents/$(agentId)) &&
+               get(/databases/$(database)/documents/agents/$(agentId)).data.userId == request.auth.uid;
+      }
+       function canRunAgent() {
+        return request.auth != null &&
+               exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.canRunAgent == true;
+      }
+      function isAdmin() {
+        return request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.isAdmin == true;
+      }
+
+
+      // Agent owner who has 'canRunAgent' permission can create runs. Admin can also create (e.g., for testing).
+      allow create: if (isAgentOwner() && canRunAgent()) || isAdmin();
+
+      // Agent owner can read their agent's runs. Admin can read any.
+      allow read: if isAgentOwner() || isAdmin();
+      allow list: if isAgentOwner() || isAdmin(); // For listing runs for a specific agent
+    }
+
+    // --- Gofannon Tool Manifest ---
+    match /gofannonToolManifest/{docId} {
+      function isAdmin() {
+        return request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.isAdmin == true;
+      }
+      // Authenticated users can read.
+      allow read: if request.auth != null;
+      // Only admin (or a specific service account/function) can write.
+      allow write: if isAdmin(); // Or a more specific rule for a backend process
+    }
+
+    // (userSettings collection can be added here if needed later with similar logic)
+  }
+}

@@ -489,7 +489,80 @@ To enable these workflows, you (or the repository owner) need to configure the f
 
 ---    
 
-## 8. Troubleshooting (Common Issues)
+## 8. User Roles and Permissions System
+
+AgentLabUI now includes a user roles and permissions system to control access to various features and the application itself.
+
+### Overview
+
+*   **Users Collection:** User profiles and permissions are stored in a Firestore collection named `users`. Each document in this collection corresponds to a user and is keyed by their Firebase Authentication UID.
+*   **Permissions Field:** Each user document can have a `permissions` map field. This map contains boolean keys that define what a user is allowed to do.
+    *   `isAdmin`: (boolean) If true, the user can access the Admin Panel and manage other users' permissions.
+    *   `isAuthorized`: (boolean) If true, the user is authorized to access the main application features (dashboard, agents, etc.). If false or if the `permissions` field is missing, the user will be redirected to an "Unauthorized" page after logging in.
+    *   `canCreateAgent`: (boolean) If true, the user can create new agent configurations.
+    *   `canRunAgent`: (boolean) If true, the user can run deployed agents.
+*   **New User Workflow:**
+    1.  When a new user logs in for the first time, a basic profile is created for them in the `users` collection *without* the `permissions` field.
+    2.  These users will appear in the "Admin Panel" under "Users Awaiting Permission Setup".
+    3.  An administrator must then set their permissions.
+
+### Initial Admin Setup (Crucial First Step)
+
+To use the admin features and authorize other users, you must first manually designate an initial administrator.
+
+1.  **Log In:** Log in to the AgentLabUI application with the Google account you intend to be the first administrator. This action will create their user document in the `users` collection in Firestore if it doesn't already exist.
+2.  **Access Firestore:** Go to your Firebase Console -> Firestore Database.
+3.  **Locate User Document:** Navigate to the `users` collection. Find the document whose ID matches the Firebase UID of the admin user you just logged in with.
+4.  **Add Permissions Field:**
+    *   Click "Add field" to this user's document.
+    *   **Field name:** `permissions`
+    *   **Field type:** `map`
+    *   Inside this `permissions` map, add the following key-value pairs (all boolean):
+        *   `isAdmin` : `true`
+        *   `isAuthorized` : `true`
+        *   `canCreateAgent` : `true` (or `false` as desired)
+        *   `canRunAgent` : `true` (or `false` as desired)
+    *   You can also add a field `permissionsLastUpdatedAt` (type: timestamp) if you wish, though the system will add/update this when permissions are changed via the admin panel.
+
+    Example structure for the admin's `permissions` field:
+    ```  
+    permissions (map)  
+        isAdmin (boolean)      : true  
+        isAuthorized (boolean) : true  
+        canCreateAgent (boolean): true  
+        canRunAgent (boolean)   : true  
+    ```  
+5.  **Verify:** Log out and log back in as the admin user. You should now see an "Admin" link in the navigation bar.
+
+### Admin Panel
+
+*   **Access:** Users with `permissions.isAdmin === true` will see an "Admin" link in the navigation bar, leading to `/admin`.
+*   **Functionality:**
+    *   **Users Awaiting Permission Setup:** The Admin Panel lists all users whose `users/{uid}` document in Firestore does *not* yet have a `permissions` field.
+    *   **Set Permissions:**
+        *   Admins can click on a user from this list.
+        *   A dialog will appear allowing the admin to toggle checkboxes for `isAdmin`, `isAuthorized`, `canCreateAgent`, and `canRunAgent`.
+        *   Saving these permissions will update the user's document in Firestore.
+        *   Once permissions are set, the user will no longer appear in the "awaiting review" list.
+
+### User Experience
+
+*   **Authorized Users:** If a user has `permissions.isAuthorized === true`, they can access the application's protected routes (Dashboard, Create Agent, etc.) based on their other specific permissions (e.g., `canCreateAgent`).
+*   **Unauthorized Users:** If a user logs in and their `permissions` field is missing, or `permissions.isAuthorized === false`, they will be redirected to an `/unauthorized` page. They must be explicitly authorized by an admin.
+
+### Firestore Security Rules
+
+The Firestore security rules (`firestore.rules`) have been updated to support this system:
+*   Users can create their own profile on first login (via `ensureUserProfile`) but cannot set their own permissions.
+*   Users can update specific, non-sensitive fields of their own profile (e.g., `lastLoginAt`, `displayName`).
+*   Only users designated as admins (via `permissions.isAdmin === true` in their *own* user document) can:
+    *   Read all user documents (for the admin panel).
+    *   Update the `permissions` field of *other* user documents.
+*   Permissions like `canCreateAgent` and `canRunAgent` are checked by the rules before allowing agent creation or run operations.
+
+---
+
+## 9. Troubleshooting (Common Issues)
 
 *   **Permission Errors (Firebase/GCP):**
     *   Ensure your Firebase project is on the Blaze plan for Functions.
