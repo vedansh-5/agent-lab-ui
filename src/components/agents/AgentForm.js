@@ -1,20 +1,19 @@
 // src/components/agents/AgentForm.js
 import React, { useState, useEffect } from 'react';
 import ToolSelector from '../tools/ToolSelector';
-import ChildAgentFormDialog from './ChildAgentFormDialog'; // Updated import
+import ChildAgentFormDialog from './ChildAgentFormDialog';
 import { fetchGofannonTools } from '../../services/agentService';
-import { AGENT_TYPES,
-    GEMINI_MODELS} from '../../constants/agentConstants'; // Updated import
+import { AGENT_TYPES, GEMINI_MODELS } from '../../constants/agentConstants';
 import {
     TextField, Button, Select, MenuItem, FormControl, InputLabel,
     Paper, Grid, Box, CircularProgress, Typography, IconButton, List,
-    ListItem, ListItemText, ListItemSecondaryAction, FormHelperText
+    ListItem, ListItemText, ListItemSecondaryAction, FormHelperText,
+    Checkbox, FormControlLabel // Added Checkbox, FormControlLabel
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 
-// Main AgentForm Component
 const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [name, setName] = useState(initialData.name || '');
     const [description, setDescription] = useState(initialData.description || '');
@@ -23,6 +22,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [instruction, setInstruction] = useState(initialData.instruction || '');
     const [selectedTools, setSelectedTools] = useState(initialData.tools || []);
     const [maxLoops, setMaxLoops] = useState(initialData.maxLoops || 3);
+    const [enableCodeExecution, setEnableCodeExecution] = useState(initialData.enableCodeExecution || false); // New state
 
     const [childAgents, setChildAgents] = useState(initialData.childAgents || []);
     const [isChildFormOpen, setIsChildFormOpen] = useState(false);
@@ -32,7 +32,6 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [loadingTools, setLoadingTools] = useState(false);
     const [toolError, setToolError] = useState('');
     const [formError, setFormError] = useState('');
-
 
     const handleRefreshGofannonTools = async () => {
         setLoadingTools(true);
@@ -64,10 +63,10 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         setInstruction(initialData.instruction || '');
         setSelectedTools(initialData.tools || []);
         setMaxLoops(initialData.maxLoops || 3);
+        setEnableCodeExecution(initialData.enableCodeExecution || false); // Initialize new state
         setChildAgents(initialData.childAgents || []);
         setFormError('');
     }, [initialData]);
-
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -85,6 +84,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         const agentDataToSubmit = {
             name, description, agentType,
             model, instruction, tools: selectedTools,
+            enableCodeExecution, // Add this to submitted data
         };
 
         if (agentType === 'LoopAgent') {
@@ -92,6 +92,9 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         }
         if (agentType === 'SequentialAgent' || agentType === 'ParallelAgent') {
             agentDataToSubmit.childAgents = childAgents;
+            // For orchestrators, 'enableCodeExecution' at parent level might not be directly used by the orchestrator itself.
+            // It's more relevant for the child agents or the looped agent in LoopAgent.
+            // We'll keep it here for consistency, and backend can decide how to apply it.
         }
 
         onSubmit(agentDataToSubmit);
@@ -128,6 +131,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         <Paper elevation={3} sx={{ p: { xs: 2, md: 4 } }}>
             <Box component="form" onSubmit={handleSubmit} noValidate>
                 <Grid container spacing={3}>
+                    {/* ... other fields ... */}
                     <Grid item xs={12}>
                         <TextField label="Agent Name" id="name" value={name} onChange={(e) => setName(e.target.value)} required fullWidth variant="outlined" />
                     </Grid>
@@ -143,6 +147,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                         </FormControl>
                     </Grid>
 
+
                     {showParentConfig && (
                         <>
                             <Grid item xs={12} sm={6}>
@@ -152,7 +157,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                         {GEMINI_MODELS.map(m => <MenuItem key={m} value={m}>{m}</MenuItem>)}
                                     </Select>
                                     <FormHelperText>
-                                        {agentType === 'LoopAgent' ? "Model for the looped agent." : "Model for this agent."}
+                                        {agentType === 'LoopAgent' ? "Model for the looped agent." : "Model for this agent."} (Gemini 2 for built-in tools/executor)
                                     </FormHelperText>
                                 </FormControl>
                             </Grid>
@@ -164,6 +169,19 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                     placeholder="e.g., You are a helpful assistant."
                                     fullWidth variant="outlined"
                                 />
+                            </Grid>
+                            <Grid item xs={12}>
+                                <FormControlLabel
+                                    control={
+                                        <Checkbox
+                                            checked={enableCodeExecution}
+                                            onChange={(e) => setEnableCodeExecution(e.target.checked)}
+                                            name="enableCodeExecution"
+                                        />
+                                    }
+                                    label="Enable Built-in Code Execution"
+                                />
+                                <FormHelperText sx={{ml:3.5, mt:-0.5}}>(For this agent or its looped child. Requires a Gemini 2 model compatible with code execution.)</FormHelperText>
                             </Grid>
                             <Grid item xs={12}>
                                 <Typography variant="subtitle1" sx={{mb:1}}>
@@ -193,14 +211,20 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                             />
                         </Grid>
                     )}
+                    {/* Orchestrator specific notes - No direct executor or tools for parent */}
+                    {showChildConfig && (
+                        <Grid item xs={12}>
+                            <Typography variant="body2" color="text.secondary" sx={{mb:1}}>
+                                For Sequential/Parallel agents, configure Model, Instruction, Tools, and Code Execution within each Child Agent.
+                                The parent orchestrator itself typically does not use these fields directly.
+                            </Typography>
+                        </Grid>
+                    )}
+
 
                     {showChildConfig && (
                         <Grid item xs={12}>
                             <Typography variant="h6" gutterBottom>Child Agents</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{mb:1}}>
-                                Define the sequence or set of parallel agents that this orchestrator will manage.
-                                The orchestrator's own Model, Instruction, and Tools fields (if shown above) are generally not used for its direct operation.
-                            </Typography>
                             <Button
                                 variant="outlined"
                                 startIcon={<AddCircleOutlineIcon />}
@@ -215,7 +239,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                         <ListItem key={child.id || index} divider={index < childAgents.length -1}>
                                             <ListItemText
                                                 primary={child.name}
-                                                secondary={`Model: ${child.model} | Tools: ${child.tools?.length || 0}`}
+                                                secondary={`Model: ${child.model} | Tools: ${child.tools?.length || 0} | Code Exec: ${child.enableCodeExecution ? 'Yes' : 'No'}`}
                                             />
                                             <ListItemSecondaryAction>
                                                 <IconButton edge="end" aria-label="edit" onClick={() => handleOpenChildForm(child)}>

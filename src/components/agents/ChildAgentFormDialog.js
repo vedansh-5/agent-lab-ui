@@ -2,11 +2,12 @@
 import React, { useState, useEffect } from 'react';
 import {
     TextField, Button, Select, MenuItem, FormControl, InputLabel,
-    Grid, Dialog, DialogTitle, DialogContent, DialogActions, FormHelperText
+    Grid, Dialog, DialogTitle, DialogContent, DialogActions, FormHelperText,
+    Checkbox, FormControlLabel // Added Checkbox, FormControlLabel
 } from '@mui/material';
 import { v4 as uuidv4 } from 'uuid';
 import ToolSelector from '../tools/ToolSelector';
-import { GEMINI_MODELS } from '../../constants/agentConstants'; // Import GEMINI_MODELS
+import { GEMINI_MODELS } from '../../constants/agentConstants';
 
 const ChildAgentFormDialog = ({
                                   open,
@@ -23,6 +24,7 @@ const ChildAgentFormDialog = ({
     const [model, setModel] = useState(GEMINI_MODELS[0]);
     const [instruction, setInstruction] = useState('');
     const [selectedTools, setSelectedTools] = useState([]);
+    const [enableCodeExecution, setEnableCodeExecution] = useState(false); // New state
     const [formError, setFormError] = useState('');
 
     useEffect(() => {
@@ -32,12 +34,14 @@ const ChildAgentFormDialog = ({
             setModel(childAgentData.model || GEMINI_MODELS[0]);
             setInstruction(childAgentData.instruction || '');
             setSelectedTools(childAgentData.tools || []);
+            setEnableCodeExecution(childAgentData.enableCodeExecution || false); // Init
         } else {
             setName('');
             setDescription('');
             setModel(GEMINI_MODELS[0]);
             setInstruction('');
             setSelectedTools([]);
+            setEnableCodeExecution(false); // Init
         }
         setFormError('');
     }, [childAgentData, open]);
@@ -57,7 +61,8 @@ const ChildAgentFormDialog = ({
             description,
             model,
             instruction,
-            tools: selectedTools
+            tools: selectedTools,
+            enableCodeExecution // Add to save
         });
         onClose();
     };
@@ -67,6 +72,7 @@ const ChildAgentFormDialog = ({
             <DialogTitle>{childAgentData ? 'Edit Child Agent' : 'Add New Child Agent'}</DialogTitle>
             <DialogContent>
                 <Grid container spacing={2} sx={{ pt: 1 }}>
+                    {/* ... other fields ... */}
                     <Grid item xs={12}>
                         <TextField
                             label="Child Agent Name"
@@ -95,6 +101,7 @@ const ChildAgentFormDialog = ({
                             <Select value={model} onChange={(e) => setModel(e.target.value)} label="Model">
                                 {GEMINI_MODELS.map(m => <MenuItem key={m} value={m}>{m}</MenuItem>)}
                             </Select>
+                            <FormHelperText>(Gemini 2 for built-in tools/executor)</FormHelperText>
                         </FormControl>
                     </Grid>
                     <Grid item xs={12}>
@@ -110,6 +117,19 @@ const ChildAgentFormDialog = ({
                             placeholder="e.g., You are a specialized researcher. Given a topic, find three key facts."
                             error={formError.includes('instruction')}
                         />
+                    </Grid>
+                    <Grid item xs={12}>
+                        <FormControlLabel
+                            control={
+                                <Checkbox
+                                    checked={enableCodeExecution}
+                                    onChange={(e) => setEnableCodeExecution(e.target.checked)}
+                                    name="enableChildCodeExecution"
+                                />
+                            }
+                            label="Enable Built-in Code Execution for this child agent"
+                        />
+                        <FormHelperText sx={{ml:3.5, mt:-0.5}}>(Requires a Gemini 2 model compatible with code execution.)</FormHelperText>
                     </Grid>
                     <Grid item xs={12}>
                         <ToolSelector
@@ -134,4 +154,4 @@ const ChildAgentFormDialog = ({
     );
 };
 
-export default ChildAgentFormDialog;
+export default ChildAgentFormDialog;  
