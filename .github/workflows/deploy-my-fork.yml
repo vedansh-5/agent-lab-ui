@@ -2,52 +2,52 @@
 name: Deploy Fork to My Firebase Hosting
 
 on:
-  workflow_dispatch: # Allows manual triggering from the Actions tab in the fork
+  workflow_dispatch:
     inputs:
       branch:
         description: 'Branch to deploy'
         required: true
-        default: 'main' # Or whatever default branch they use in their fork
+        default: 'main'
       channelId:
-        description: 'Firebase Hosting channel ID (e.g., live, staging, or leave empty for a new preview channel)'
+        description: 'Firebase Hosting channel ID (e.g., live, staging, or empty for preview)'
         required: false
         default: 'live'
 
 jobs:
   build_and_deploy_fork:
-    # Only run this job if the FIREBASE_CONFIG_JSON secret is present in THIS FORK.
-    if: secrets.FIREBASE_CONFIG_JSON != ''
+    # No 'if' condition at the job level checking for secrets.
+    # The job will always attempt to run if manually dispatched.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout specific branch from fork
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.branch }} # Checkout the branch specified in manual trigger
+          ref: ${{ github.event.inputs.branch }}
 
       - name: Create Firebase Config file and Extract Project ID
         id: setup_firebase
+        env:
+          # Pass the secret as an environment variable for safer handling in the script
+          FIREBASE_CONFIG_JSON_FROM_SECRET: ${{ secrets.FIREBASE_CONFIG_JSON }}
         run: |
           echo "Attempting to create firebaseConfig.json and extract projectId..."
-          JSON_CONFIG='${{ secrets.FIREBASE_CONFIG_JSON }}'
-          if [ -z "$JSON_CONFIG" ]; then
-            echo "Error: FIREBASE_CONFIG_JSON secret is empty or not set in this fork."
+          if [ -z "$FIREBASE_CONFIG_JSON_FROM_SECRET" ]; then
+            echo "::error title=Missing Secret::FIREBASE_CONFIG_JSON secret is not set in this fork's GitHub Actions secrets. Please configure it in Settings > Secrets and variables > Actions."
             exit 1
           fi
 
           mkdir -p src # Ensure the src directory exists
-          echo "$JSON_CONFIG" > src/firebaseConfig.json
+          echo "$FIREBASE_CONFIG_JSON_FROM_SECRET" > src/firebaseConfig.json
 
-          PROJECT_ID_VALUE=$(echo "$JSON_CONFIG" | jq -r .projectId)
+          PROJECT_ID_VALUE=$(echo "$FIREBASE_CONFIG_JSON_FROM_SECRET" | jq -r .projectId)
 
           if [ -z "$PROJECT_ID_VALUE" ] || [ "$PROJECT_ID_VALUE" == "null" ]; then
-            echo "Error: projectId not found or is null in FIREBASE_CONFIG_JSON."
-            echo "Content of FIREBASE_CONFIG_JSON was:"
-            echo "$JSON_CONFIG" # Be careful if this ever runs in a public context, but for forks this is usually fine.
+            echo "::error title=Invalid Config::projectId not found or is null in FIREBASE_CONFIG_JSON. Ensure the secret contains valid Firebase web config JSON with a 'projectId' field."
             exit 1
           fi
           echo "Extracted PROJECT_ID: ${PROJECT_ID_VALUE}"
           echo "PROJECT_ID=${PROJECT_ID_VALUE}" >> $GITHUB_ENV
-          echo "project_id_extracted=${PROJECT_ID_VALUE}" >> $GITHUB_OUTPUT
+          echo "project_id_extracted=${PROJECT_ID_VALUE}" >> $GITHUB_OUTPUT # For potential future use if needed
         shell: bash
 
       - name: Install Dependencies and Build
@@ -56,16 +56,12 @@ jobs:
           npm run build
 
       - name: Deploy to My Firebase Hosting
-        # This step only runs if the service account secret is present AND a valid projectId was extracted.
-        if: >-
-          secrets.FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI != '' &&
-          env.PROJECT_ID != '' &&
-          steps.setup_firebase.outputs.project_id_extracted != ''
+        # No 'if' condition at the step level checking for secrets.
+        # The action will fail if firebaseServiceAccount is missing or projectId is invalid.
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          # The action requires these secrets. If they are not set in the fork, the action will fail.
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI }}'
-          # Use the channelId from the manual trigger input.
-          # If empty, the action creates a preview channel. 'live' for production.
           channelId: ${{ github.event.inputs.channelId }}
-          projectId: ${{ env.PROJECT_ID }} # Use the extracted project ID
+          projectId: ${{ env.PROJECT_ID }} # Relies on PROJECT_ID being correctly set by the previous step  
