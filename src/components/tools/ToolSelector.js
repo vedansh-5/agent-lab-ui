@@ -1,8 +1,8 @@
 // src/components/tools/ToolSelector.js
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
     Typography, Button, Checkbox, FormControlLabel, FormGroup,
-    Box, CircularProgress, Alert, Paper, Grid, FormHelperText // Added FormHelperText
+    Box, CircularProgress, Alert, Paper, Grid, FormHelperText
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
@@ -32,7 +32,31 @@ const ToolSelector = ({
                           gofannonError
                       }) => {
 
-    const handleToolToggle = (tool, source) => { // Added 'source' parameter
+    const groupedGofannonTools = useMemo(() => {
+        if (!availableGofannonTools || availableGofannonTools.length === 0) {
+            return {};
+        }
+        return availableGofannonTools.reduce((acc, tool) => {
+            const modulePath = tool.module_path || '';
+            const lastDotIndex = modulePath.lastIndexOf('.');
+            let packageName = 'Uncategorized'; // Default group for tools with no/empty module_path
+
+            if (lastDotIndex !== -1) {
+                packageName = modulePath.substring(0, lastDotIndex);
+            } else if (modulePath) {
+                // If no dot but modulePath exists (e.g., "my_module"), group by the module name itself or a generic group
+                packageName = `Module: ${modulePath}`; // Or "Root Modules" / "Local Modules"
+            }
+
+            if (!acc[packageName]) {
+                acc[packageName] = [];
+            }
+            acc[packageName].push(tool);
+            return acc;
+        }, {});
+    }, [availableGofannonTools]);
+
+    const handleToolToggle = (tool, source) => {
         const isSelected = selectedTools.some(st => st.id === tool.id);
         if (isSelected) {
             setSelectedTools(selectedTools.filter(st => st.id !== tool.id));
@@ -50,8 +74,7 @@ const ToolSelector = ({
                 toolToAdd = {
                     id: tool.id,
                     name: tool.name,
-                    type: tool.type // e.g., 'adk_builtin_search'
-                    // For Vertex AI Search, if enabled, would also need data_store_id from tool object or another input
+                    type: tool.type
                 };
             }
             if (toolToAdd) {
@@ -75,44 +98,75 @@ const ToolSelector = ({
                 </Button>
             </Box>
             {gofannonError && <Alert severity="error" sx={{ mb: 1 }}>{gofannonError}</Alert>}
-            {availableGofannonTools.length > 0 ? (
-                <FormGroup sx={{ maxHeight: 200, overflowY: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1 }}>
-                    <Grid container spacing={1}>
-                        {availableGofannonTools.map(tool => (
-                            <Grid item xs={12} sm={6} md={4} key={tool.id}>
-                                <FormControlLabel
-                                    control={
-                                        <Checkbox
-                                            checked={selectedTools.some(st => st.id === tool.id)}
-                                            onChange={() => handleToolToggle(tool, 'gofannon')}
-                                            name={tool.id}
-                                        />
-                                    }
-                                    label={<Typography variant="body2" title={tool.description}>{tool.name}</Typography>}
-                                />
-                            </Grid>
-                        ))}
-                    </Grid>
-                </FormGroup>
+            {loadingGofannon && <Box sx={{display:'flex', justifyContent:'center', my:2}}><CircularProgress size={24} /></Box>}
+
+            {!loadingGofannon && Object.keys(groupedGofannonTools).length > 0 ? (
+                Object.entries(groupedGofannonTools)
+                    .sort(([pkgA], [pkgB]) => pkgA.localeCompare(pkgB)) // Sort packages alphabetically
+                    .map(([packageName, toolsInPackage]) => (
+                        <Box key={packageName} sx={{ mb: 2 }}>
+                            <Typography
+                                variant="subtitle1"
+                                component="h4"
+                                sx={{
+                                    mt: 1,
+                                    mb: 0.5,
+                                    pb: 0.5,
+                                    borderBottom: '1px solid',
+                                    borderColor: 'divider',
+                                    fontWeight: 'medium'
+                                }}
+                            >
+                                {packageName}
+                            </Typography>
+                            <FormGroup sx={{ pl: 1 }}> {/* Indent tools under package name */}
+                                <Grid container spacing={0}> {/* Reduced spacing for tighter packing */}
+                                    {toolsInPackage
+                                        .sort((a, b) => a.name.localeCompare(b.name)) // Sort tools within package
+                                        .map(tool => (
+                                            <Grid item xs={12} sm={6} key={tool.id}> {/* Adjusted grid for better layout */}
+                                                <FormControlLabel
+                                                    control={
+                                                        <Checkbox
+                                                            checked={selectedTools.some(st => st.id === tool.id)}
+                                                            onChange={() => handleToolToggle(tool, 'gofannon')}
+                                                            name={tool.id}
+                                                            size="small"
+                                                        />
+                                                    }
+                                                    label={
+                                                        <Typography variant="body2" title={tool.description || tool.name}>
+                                                            {tool.name}
+                                                        </Typography>
+                                                    }
+                                                    sx={{ mr: 0 }} // Remove right margin for better fit
+                                                />
+                                            </Grid>
+                                        ))}
+                                </Grid>
+                            </FormGroup>
+                        </Box>
+                    ))
             ) : (
-                !loadingGofannon && <Typography variant="body2" color="text.secondary">No Gofannon tools loaded. Click refresh.</Typography>
+                !loadingGofannon && <Typography variant="body2" color="text.secondary">No Gofannon tools loaded or available. Click refresh.</Typography>
             )}
 
             {/* ADK Built-in Function Tools Section */}
             {PREDEFINED_ADK_FUNCTION_TOOLS.length > 0 && (
                 <Box mt={3}>
                     <Typography variant="h6" component="h3" mb={1}>Select ADK Built-in Tools</Typography>
-                    <FormGroup sx={{ maxHeight: 150, overflowY: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1 }}>
+                    <FormGroup sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1 }}>
                         <Grid container spacing={1}>
                             {PREDEFINED_ADK_FUNCTION_TOOLS.map(tool => (
-                                <Grid item xs={12} sm={6} md={4} key={tool.id}>
+                                <Grid item xs={12} sm={6} key={tool.id}>
                                     <FormControlLabel
                                         control={
                                             <Checkbox
                                                 checked={selectedTools.some(st => st.id === tool.id)}
                                                 onChange={() => handleToolToggle(tool, 'adk_builtin')}
                                                 name={tool.id}
-                                                disabled={tool.requiresConfig} // Disable if needs config not yet implemented
+                                                disabled={tool.requiresConfig}
+                                                size="small"
                                             />
                                         }
                                         label={<Typography variant="body2" title={tool.description}>{tool.name}</Typography>}
