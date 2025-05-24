@@ -3,10 +3,10 @@ import React, { useState, useEffect } from 'react';
 import { getAgentRuns } from '../../services/firebaseService';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ErrorMessage from '../common/ErrorMessage';
-import RunHistoryItem from './RunHistoryItem'; // Updated import
+import RunHistoryItem from './RunHistoryItem';
 import { Paper, Typography, Box } from '@mui/material';
 
-const RunHistory = ({ agentId }) => {
+const RunHistory = ({ agentId, onSelectRun }) => { // Added onSelectRun prop
     const [runs, setRuns] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -40,7 +40,12 @@ const RunHistory = ({ agentId }) => {
             {runs.length > 0 ? (
                 <Box sx={{ maxHeight: '500px', overflowY: 'auto' }}>
                     {runs.map((run, index) => (
-                        <RunHistoryItem key={run.id || index} run={run} index={index} />
+                        <RunHistoryItem
+                            key={run.id || index}
+                            run={run}
+                            index={index}
+                            onSelectRun={onSelectRun} // Pass down the callback
+                        />
                     ))}
                 </Box>
             ) : (

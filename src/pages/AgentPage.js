@@ -9,26 +9,28 @@ import AgentRunner from '../components/agents/AgentRunner';
 import RunHistory from '../components/agents/RunHistory';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
-import AgentDetailsDisplay from '../components/agents/AgentDetailsDisplay'; // New
-import ChildAgentsDisplay from '../components/agents/ChildAgentsDisplay';   // New
-import DeploymentControls from '../components/agents/DeploymentControls'; // New
+import AgentDetailsDisplay from '../components/agents/AgentDetailsDisplay';
+import ChildAgentsDisplay from '../components/agents/ChildAgentsDisplay';
+import DeploymentControls from '../components/agents/DeploymentControls';
 
 import { Container, Typography, Box, Paper, Grid, Button, Divider, Chip } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
-import { PLATFORM_IDS, getPlatformById } from '../constants/platformConstants'; // New Import
+import { PLATFORM_IDS, getPlatformById } from '../constants/platformConstants';
 
 const AgentPage = () => {
     const { agentId } = useParams();
     const { currentUser } = useAuth();
 
     const [agent, setAgent] = useState(null);
-    const [loading, setLoading] = useState(true); // For initial page load
+    const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [isDeploying, setIsDeploying] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
-    const [isCheckingStatus, setIsCheckingStatus] = useState(false); // For manual refresh spinner
+    const [isCheckingStatus, setIsCheckingStatus] = useState(false);
     const [pollingIntervalId, setPollingIntervalId] = useState(null);
-    const agentIdRef = useRef(agentId); // To use in interval callbacks without stale closure
+    const [activeHistoricalRun, setActiveHistoricalRun] = useState(null); // New state for historical run
+
+    const agentIdRef = useRef(agentId);
 
     useEffect(() => {
         agentIdRef.current = agentId;
@@ -48,7 +50,7 @@ const AgentPage = () => {
             return;
         }
         if (!isPoll) {
-            setLoading(true); // Only set loading for non-poll fetches
+            setLoading(true);
             setError(null);
         }
 
@@ -70,27 +72,21 @@ const AgentPage = () => {
             }
             setAgent({
                 ...agentData,
-                platform: agentData.platform || PLATFORM_IDS.GOOGLE_VERTEX, // Default for older agents
+                platform: agentData.platform || PLATFORM_IDS.GOOGLE_VERTEX,
                 childAgents: agentData.childAgents || [],
                 maxLoops: agentData.maxLoops || (agentData.agentType === 'LoopAgent' ? 3 : undefined)
             });
-            if (!isPoll) setError(null); // Clear error only on full fetch, not poll
+            if (!isPoll) setError(null);
 
             const status = agentData.deploymentStatus;
             if (status === 'deploying_initiated' || status === 'deploying_in_progress') {
-                if (!pollingIntervalId && !isPoll) { // Start polling only if not already polling AND it's not a poll itself
-                    console.log(`Status is ${status}, starting polling for ${agentIdRef.current}`);
+                if (!pollingIntervalId && !isPoll) {
                     const newIntervalId = setInterval(async () => {
-                        console.log(`Polling status for ${agentIdRef.current}...`);
-                        try {
-                            if (document.visibilityState === 'visible') { // Only poll if tab is visible
-                                await checkAgentDeploymentStatus(agentIdRef.current);
-                                await fetchAgentData(true); // Re-fetch from FS (as a poll)
-                            }
-                        } catch (pollError) {
-                            console.error("Error during polling status check:", pollError);
+                        if (document.visibilityState === 'visible') {
+                            await checkAgentDeploymentStatus(agentIdRef.current);
+                            await fetchAgentData(true);
                         }
-                    }, 30000); // Poll every 30 seconds
+                    }, 30000);
                     setPollingIntervalId(newIntervalId);
                 }
             } else {
@@ -105,22 +101,20 @@ const AgentPage = () => {
         } finally {
             if (!isPoll) setLoading(false);
         }
-    }, [currentUser, stopPolling, pollingIntervalId]); // fetchAgentData dependencies
+    }, [currentUser, stopPolling, pollingIntervalId]);
 
     useEffect(() => {
         fetchAgentData();
-        return () => stopPolling(); // Cleanup on unmount
+        return () => stopPolling();
     }, [fetchAgentData, stopPolling]);
 
     const handleManualStatusRefresh = async () => {
         if (!agent || !agent.id || isCheckingStatus || isDeploying || isDeleting) return;
         setIsCheckingStatus(true);
         try {
-            console.log(`Manually refreshing status for ${agent.id}`);
             await checkAgentDeploymentStatus(agent.id);
-            await fetchAgentData(); // Re-fetch full agent data
+            await fetchAgentData();
         } catch (err) {
-            console.error("Error manually refreshing status:", err);
             setError(`Failed to refresh status: ${err.message}`);
         } finally {
             setIsCheckingStatus(false);
@@ -131,43 +125,39 @@ const AgentPage = () => {
         if (!agent) return;
         setIsDeploying(true);
         setError(null);
-        stopPolling(); // Stop any active polling before initiating new deployment
-
+        stopPolling();
         try {
-            const result = await deployAgent(agent, agent.id);
-            if (result.success && result.resourceName) {
-                // Deployment successful or initiated, status will be updated by fetchAgentData
-            } else if (result.wasTimeout) {
-                // Handled by fetchAgentData logic which will start polling
-            } else {
-                setError(result.message || "Deployment initiation failed.");
-            }
+            await deployAgent(agent, agent.id);
         } catch (err) {
-            console.error("Error deploying agent:", err);
             setError(err.message || "Failed to deploy agent. Check function logs.");
         } finally {
             setIsDeploying(false);
-            await fetchAgentData(); // Re-fetch to get latest status and trigger polling if needed
+            await fetchAgentData();
         }
     };
 
     const handleDeleteDeployment = async () => {
         if (!agent || !agent.vertexAiResourceName) return;
-        if (!window.confirm("Are you sure you want to delete this agent's deployment from Vertex AI? This cannot be undone.")) return;
+        if (!window.confirm("Are you sure you want to delete this agent's deployment from Vertex AI?")) return;
         setIsDeleting(true);
         setError(null);
         stopPolling();
-
         try {
             await deleteAgentDeployment(agent.vertexAiResourceName, agent.id);
-            // UI will update via fetchAgentData
         } catch (err) {
-            console.error("Error deleting agent deployment:", err);
             setError(err.message || "Failed to delete agent deployment.");
         } finally {
             setIsDeleting(false);
             await fetchAgentData();
         }
+    };
+
+    const handleSelectHistoricalRun = (runData) => {
+        setActiveHistoricalRun(runData);
+    };
+
+    const handleSwitchToLiveChat = () => {
+        setActiveHistoricalRun(null);
     };
 
     if (loading && !agent) return <Box display="flex" justifyContent="center" py={5}><LoadingSpinner /></Box>;
@@ -180,7 +170,7 @@ const AgentPage = () => {
         </Container>
     );
 
-    const canRunAgent = agent.platform === PLATFORM_IDS.GOOGLE_VERTEX &&
+    const canRunAgentLive = agent.platform === PLATFORM_IDS.GOOGLE_VERTEX &&
         agent.deploymentStatus === 'deployed' &&
         agent.vertexAiResourceName &&
         currentUser;
@@ -208,16 +198,12 @@ const AgentPage = () => {
                     </Button>
                 </Box>
                 <Divider sx={{ my: 2 }} />
-
                 <Grid container spacing={3}>
-                    <Grid item xs={12}> {/* AgentDetailsDisplay takes full width */}
+                    <Grid item xs={12}>
                         <AgentDetailsDisplay agent={agent} />
                     </Grid>
                 </Grid>
-
                 <ChildAgentsDisplay agent={agent} />
-
-                {/* Conditionally render DeploymentControls only for Google Vertex agents */}
                 {agent.platform === PLATFORM_IDS.GOOGLE_VERTEX && (
                     <>
                         <Divider sx={{ my: 3 }} />
@@ -236,11 +222,18 @@ const AgentPage = () => {
                 )}
             </Paper>
 
-            {canRunAgent && (
-                <AgentRunner agentResourceName={agent.vertexAiResourceName} agentFirestoreId={agent.id} adkUserId={currentUser.uid} />
+            {(canRunAgentLive || activeHistoricalRun) && (
+                <AgentRunner
+                    agentResourceName={agent.vertexAiResourceName}
+                    agentFirestoreId={agent.id}
+                    adkUserId={currentUser.uid}
+                    historicalRunData={activeHistoricalRun}
+                    onSwitchToLiveChat={handleSwitchToLiveChat}
+                    isLiveModeEnabled={canRunAgentLive} // To know if live chat is even an option
+                />
             )}
 
-            <RunHistory agentId={agent.id} />
+            <RunHistory agentId={agent.id} onSelectRun={handleSelectHistoricalRun} />
         </Container>
     );
 };

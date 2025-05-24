@@ -16,6 +16,8 @@ import UnauthorizedPage from './pages/UnauthorizedPage'; // New
 
 // MUI Imports for App Layout
 import { Box, Container, Typography, Link as MuiLink } from '@mui/material';
+import PlatformUnderConstructionPage
+    from "./pages/PlatformUnderConstructionPage";
 
 
 // AdminRoute component (can be defined here or in a separate file)
@@ -71,6 +73,10 @@ function AppContent() {
                     <Route
                         path="/settings"
                         element={<ProtectedRoute><SettingsPage /></ProtectedRoute>}
+                    />
+                    <Route
+                        path="/platform-under-construction/:platformId"
+                        element={<ProtectedRoute><PlatformUnderConstructionPage /></ProtectedRoute>}
                     />
                     <Route
                         path="/admin"

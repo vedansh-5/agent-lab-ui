@@ -1,26 +1,50 @@
 // src/components/agents/RunHistoryItem.js
 import React from 'react';
 import {
-    Accordion, AccordionSummary, AccordionDetails, Box, Typography, Paper, Chip
+    Accordion, AccordionSummary, AccordionDetails, Box, Typography, Paper, Chip, Button
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import PageviewIcon from '@mui/icons-material/Pageview'; // Icon for "View in Runner"
 
-const RunHistoryItem = ({ run, index }) => {
+const RunHistoryItem = ({ run, index, onSelectRun }) => { // Added onSelectRun prop
+    const handleViewInRunner = (event) => {
+        event.stopPropagation(); // Prevent accordion from toggling if button is inside summary
+        if (onSelectRun) {
+            onSelectRun(run);
+        }
+    };
+
     return (
         <Accordion TransitionProps={{ unmountOnExit: true }}>
             <AccordionSummary
                 expandIcon={<ExpandMoreIcon />}
                 aria-controls={`run-${index}-content`}
                 id={`run-${index}-header`}
+                sx={{
+                    '& .MuiAccordionSummary-content': { // Target the content area for better spacing
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        width: '100%'
+                    }
+                }}
             >
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 1, overflow: 'hidden', mr: 1 }}>
                     <Typography variant="subtitle1" sx={{ flexShrink: 0, mr: 2,  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {run.inputMessage?.substring(0, 50)}{run.inputMessage?.length > 50 && '...'}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ml:1, flexShrink:0}}>
+                    <Typography variant="caption" color="text.secondary" sx={{ml: 'auto', flexShrink:0, textAlign: 'right' }}>
                         {run.timestamp?.toDate ? new Date(run.timestamp.toDate()).toLocaleString() : 'N/A'}
                     </Typography>
                 </Box>
+                <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={handleViewInRunner}
+                    startIcon={<PageviewIcon />}
+                    sx={{ ml: 1, flexShrink: 0 }}
+                >
+                    View
+                </Button>
             </AccordionSummary>
             <AccordionDetails sx={{ bgcolor: 'action.hover' }}>
                 <Typography variant="caption" display="block" gutterBottom>
