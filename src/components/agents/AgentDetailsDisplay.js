@@ -12,9 +12,14 @@ const AgentDetailsDisplay = ({ agent }) => {
 
     return (
         <>
-            {platformInfo && ( // New: Display Platform
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, display: 'flex', alignItems: 'center' }}>
-                    Platform:&nbsp;
+            {platformInfo && (
+                <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    component="div"
+                    sx={{ mb: 1.5, display: 'flex', alignItems: 'center' }}
+                >
+                Platform:&nbsp;
                     <Chip label={platformInfo.name} size="small" variant="outlined" />
                 </Typography>
             )}

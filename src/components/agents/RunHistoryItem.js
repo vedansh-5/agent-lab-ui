@@ -1,7 +1,8 @@
 // src/components/agents/RunHistoryItem.js
 import React from 'react';
 import {
-    Accordion, AccordionSummary, AccordionDetails, Box, Typography, Paper, Chip, Button,
+    Accordion, AccordionSummary, AccordionDetails, Box, Typography, Paper, Chip,
+    // Button, // <-- Removed Button
     Alert, AlertTitle
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -38,17 +39,38 @@ const RunHistoryItem = ({ run, index, onSelectRun }) => {
                         {run.timestamp?.toDate ? new Date(run.timestamp.toDate()).toLocaleString() : 'N/A'}
                     </Typography>
                 </Box>
-                <Button
-                    size="small"
-                    variant="outlined"
+                {/* MODIFIED "View" Button to be a styled Box/Typography */}
+                <Box
                     onClick={handleViewInRunner}
-                    startIcon={<PageviewIcon />}
-                    sx={{ ml: 1, flexShrink: 0 }}
+                    sx={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        color: 'primary.main',
+                        border: '1px solid',
+                        borderColor: 'primary.main',
+                        borderRadius: 1,
+                        px: 1.5,
+                        py: 0.5,
+                        ml: 1,
+                        flexShrink: 0,
+                        fontSize: '0.8125rem', // MUI small button font size
+                        '&:hover': {
+                            bgcolor: 'primary.action.hover', // Use theme's hover color
+                            // Or a more specific one: alpha(theme.palette.primary.main, theme.palette.action.hoverOpacity)
+                        }
+                    }}
+                    role="button" // Add role for accessibility
+                    tabIndex={0} // Make it focusable
+                    onKeyPress={(e) => { if (e.key === 'Enter' || e.key === ' ') handleViewInRunner(e); }} // Keyboard accessible
                 >
-                    View
-                </Button>
+                    <PageviewIcon sx={{ mr: 0.5, fontSize: '1.125rem' }} />
+                    <Typography variant="button" sx={{ lineHeight: 'inherit', fontSize: 'inherit' }}>View</Typography>
+                </Box>
+                {/* END MODIFIED "View" Button */}
             </AccordionSummary>
             <AccordionDetails sx={{ bgcolor: 'action.hover' }}>
+                {/* ... rest of the AccordionDetails content ... */}
                 <Typography variant="caption" display="block" gutterBottom>
                     Run ID: {run.id}
                     {run.adkSessionId && <Chip label={`Session: ...${run.adkSessionId.slice(-6)}`} size="small" sx={{ml:1}}/>}
