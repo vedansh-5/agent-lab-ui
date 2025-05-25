@@ -10,7 +10,7 @@ import remarkGfm from 'remark-gfm';
 
 import {
     Paper, Typography, TextField, Button, Box, List, ListItem,
-    ListItemText, Avatar, CircularProgress, IconButton, Tooltip, Alert
+    ListItemText, Avatar, CircularProgress, IconButton, Tooltip, Alert, AlertTitle
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import PersonIcon from '@mui/icons-material/Person';
@@ -18,21 +18,21 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import DeveloperModeIcon from '@mui/icons-material/DeveloperMode';
-import LiveTvIcon from '@mui/icons-material/LiveTv'; // Icon for "Back to Live Chat"
+import LiveTvIcon from '@mui/icons-material/LiveTv';
 
 const AgentRunner = ({
                          agentResourceName,
                          agentFirestoreId,
                          adkUserId,
-                         historicalRunData, // New prop
-                         onSwitchToLiveChat, // New prop
-                         isLiveModeEnabled // New prop
+                         historicalRunData,
+                         onSwitchToLiveChat,
+                         isLiveModeEnabled
                      }) => {
     const [message, setMessage] = useState('');
     const [conversation, setConversation] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState(null);
-    const [currentSessionId, setCurrentSessionId] = useState(null); // For live chat
+    const [error, setError] = useState(null); // For general errors from the callable
+    const [currentSessionId, setCurrentSessionId] = useState(null);
     const conversationEndRef = useRef(null);
 
     const [isReasoningLogOpen, setIsReasoningLogOpen] = useState(false);
@@ -46,17 +46,14 @@ const AgentRunner = ({
 
     useEffect(scrollToBottom, [conversation]);
 
-    // Effect to load historical data when prop changes
     useEffect(() => {
         if (isHistoricalView && historicalRunData) {
             const historicalConversation = [];
-            // User message
             historicalConversation.push({
                 type: 'user',
                 text: historicalRunData.inputMessage,
                 timestamp: historicalRunData.timestamp?.toDate ? historicalRunData.timestamp.toDate() : new Date(),
             });
-            // Agent response
             let agentEvents = [];
             try {
                 agentEvents = historicalRunData.outputEventsRaw ? JSON.parse(historicalRunData.outputEventsRaw) : [];
@@ -68,17 +65,13 @@ const AgentRunner = ({
                 type: 'agent',
                 text: historicalRunData.finalResponseText || "Agent did not provide a text response.",
                 events: agentEvents,
-                timestamp: historicalRunData.timestamp?.toDate ? new Date(historicalRunData.timestamp.toDate().getTime() + 1000) : new Date(), // Approx
+                timestamp: historicalRunData.timestamp?.toDate ? new Date(historicalRunData.timestamp.toDate().getTime() + 1000) : new Date(),
+                queryErrorDetails: historicalRunData.queryErrorDetails || null // Load historical errors
             });
             setConversation(historicalConversation);
-            setMessage(''); // Clear any input from live mode
-            setError(null); // Clear any errors from live mode
-            setCurrentSessionId(null); // Not applicable for historical view
-        } else if (!isHistoricalView) {
-            // If switching back to live and conversation is not empty (and not due to loading historical)
-            // then reset, unless we want to preserve live chat state.
-            // For now, let's clear it to avoid confusion when switching.
-            // setConversation([]); // Or preserve if desired
+            setMessage('');
+            setError(null);
+            setCurrentSessionId(null);
         }
     }, [historicalRunData, isHistoricalView]);
 
@@ -94,7 +87,7 @@ const AgentRunner = ({
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
-        if (isHistoricalView || !message.trim()) return; // Do nothing if historical or no message
+        if (isHistoricalView || !message.trim()) return;
 
         const userMessage = { type: 'user', text: message, timestamp: new Date() };
         setConversation(prev => [...prev, userMessage]);
@@ -105,25 +98,34 @@ const AgentRunner = ({
 
         try {
             const result = await queryAgent(agentResourceName, currentInput, adkUserId, currentSessionId, agentFirestoreId);
+
+            const agentResponse = {
+                type: 'agent',
+                text: result.responseText || "Agent responded.",
+                events: result.events || [],
+                timestamp: new Date(),
+                queryErrorDetails: result.queryErrorDetails || null
+            };
+
             if (result.success) {
-                const agentResponse = {
-                    type: 'agent',
-                    text: result.responseText || "Agent responded.",
-                    events: result.events || [],
-                    timestamp: new Date()
-                };
                 setConversation(prev => [...prev, agentResponse]);
                 if (result.adkSessionId) {
                     setCurrentSessionId(result.adkSessionId);
                 }
+                if (agentResponse.queryErrorDetails && agentResponse.queryErrorDetails.length > 0) {
+                    // Error is displayed inline, general error state not strictly needed for *these* errors
+                    // setError(`Agent processing completed with issues. See details below.`);
+                }
             } else {
-                setError(result.message || "Agent query failed.");
-                const errorResponse = { type: 'error', text: result.message || "Failed to get response", timestamp: new Date() };
-                setConversation(prev => [...prev, errorResponse]);
+                const errorMessage = result.message || "Agent query failed. No specific error message.";
+                setError(errorMessage); // Set general error for callable failure
+                agentResponse.type = 'error'; // Mark for styling
+                agentResponse.text = `Query Failed: ${errorMessage}`; // Overwrite text for error bubble
+                setConversation(prev => [...prev, agentResponse]);
             }
         } catch (err) {
             const errorMessage = err.message || "An error occurred while querying the agent.";
-            setError(errorMessage);
+            setError(errorMessage); // Set general error
             const errorResponse = { type: 'error', text: errorMessage, timestamp: new Date() };
             setConversation(prev => [...prev, errorResponse]);
         } finally {
@@ -133,9 +135,8 @@ const AgentRunner = ({
 
     const handleResetSessionOrSwitchMode = () => {
         if (isHistoricalView) {
-            onSwitchToLiveChat(); // Call prop to switch mode in parent
+            onSwitchToLiveChat();
         } else {
-            // Live mode: Reset session
             setCurrentSessionId(null);
             setConversation([]);
             setError(null);
@@ -153,18 +154,18 @@ const AgentRunner = ({
 
     return (
         <Paper elevation={3} sx={{ p: { xs: 2, md: 3 }, mt: 4 }}>
-            <Box sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+            <Box sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb:1}}>
                 <Typography variant="h5" component="h2" gutterBottom>
                     {runnerTitle}
                 </Typography>
-                {isLiveModeEnabled && ( // Show switch button only if live mode is ever possible
+                {isLiveModeEnabled && (
                     <Button
                         onClick={handleResetSessionOrSwitchMode}
                         startIcon={isHistoricalView ? <LiveTvIcon /> : <RestartAltIcon />}
                         color={isHistoricalView ? "primary" : "warning"}
                         variant="outlined"
                         size="small"
-                        disabled={!isHistoricalView && isLoading} // Disable reset if loading in live
+                        disabled={!isHistoricalView && isLoading}
                     >
                         {isHistoricalView ? "Back to Live Chat" : "Reset Live Chat"}
                     </Button>
@@ -181,7 +182,7 @@ const AgentRunner = ({
                     Live agent interaction is not available. The agent might not be deployed or accessible.
                 </Alert>
             )}
-
+            {!isHistoricalView && error && <ErrorMessage message={error} severity="error" sx={{ mb: 2 }} />}
 
             <Box
                 sx={{
@@ -211,10 +212,10 @@ const AgentRunner = ({
                                     ml: entry.type !== 'user' ? 1.5 : 0,
                                     mr: entry.type === 'user' ? 1.5 : 0,
                                     bgcolor: entry.type === 'user' ? 'primary.light' :
-                                        entry.type === 'agent' ? 'grey.200' :
+                                        entry.type === 'agent' ? (entry.queryErrorDetails ? 'warning.light' : 'grey.200') :
                                             'error.light',
                                     color: entry.type === 'user' ? 'primary.contrastText' :
-                                        entry.type === 'agent' ? 'text.primary' :
+                                        entry.type === 'agent' ? (entry.queryErrorDetails ? 'warning.contrastText' : 'text.primary') :
                                             'error.contrastText',
                                     maxWidth: '80%',
                                     wordBreak: 'break-word',
@@ -234,7 +235,7 @@ const AgentRunner = ({
                                         ) : entry.type === 'user' ? (
                                             <Typography variant="body1">{entry.text}</Typography>
                                         ) : (
-                                            <Typography variant="body1" color="error.contrastText">{entry.text}</Typography>
+                                            <Typography variant="body1" color={entry.type === 'agent' && entry.queryErrorDetails ? 'warning.contrastText' : 'error.contrastText' }>{entry.text}</Typography>
                                         )
                                     }
                                     secondary={
@@ -245,7 +246,7 @@ const AgentRunner = ({
                                                 textAlign: entry.type === 'user' ? 'right' : 'left',
                                                 mt: 0.5,
                                                 color: entry.type === 'user' ? 'primary.contrastText' :
-                                                    entry.type === 'agent' ? 'text.secondary' :
+                                                    entry.type === 'agent' ? (entry.queryErrorDetails ? 'warning.contrastText' : 'text.secondary') :
                                                         'error.contrastText',
                                                 opacity: entry.type === 'user' ? 0.8 : 1,
                                             }}
@@ -256,6 +257,35 @@ const AgentRunner = ({
                                         </Typography>
                                     }
                                 />
+                                {entry.type === 'agent' && entry.queryErrorDetails && entry.queryErrorDetails.length > 0 && (
+                                    <Alert
+                                        severity="warning"
+                                        sx={{
+                                            mt: 1,
+                                            fontSize: '0.8rem',
+                                            bgcolor: 'transparent',
+                                            color: 'inherit',
+                                            '& .MuiAlert-icon': { color: 'inherit', fontSize: '1.1rem', mr:0.5, pt:0.2 },
+                                            border: (theme) => `1px solid ${theme.palette.warning.dark}`,
+                                            p:1,
+                                        }}
+                                        iconMapping={{
+                                            warning: <ErrorOutlineIcon fontSize="inherit" />,
+                                        }}
+                                    >
+                                        <AlertTitle sx={{ fontSize: '0.9rem', fontWeight: 'bold', mb:0.5 }}>Agent Diagnostics:</AlertTitle>
+                                        <Box component="ul" sx={{ margin: 0, paddingLeft: '20px', listStyleType: 'disc', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight:'150px', overflowY:'auto' }}>
+                                            {entry.queryErrorDetails.map((err, i) => (
+                                                <Typography component="li" variant="caption" key={i} sx={{display:'list-item'}}>{typeof err === 'object' ? JSON.stringify(err) : err}</Typography>
+                                            ))}
+                                        </Box>
+                                        {(!entry.text || entry.text.trim() === "Agent responded." || entry.text.trim() === "") && (
+                                            <Typography variant="caption" display="block" sx={{mt:1, fontStyle:'italic'}}>
+                                                The agent may not have provided a complete response due to these issues.
+                                            </Typography>
+                                        )}
+                                    </Alert>
+                                )}
                                 {entry.type === 'agent' && entry.events && entry.events.length > 0 && (
                                     <Tooltip title="View Agent Reasoning Log" placement="top">
                                         <IconButton
@@ -289,8 +319,6 @@ const AgentRunner = ({
                     <div ref={conversationEndRef} />
                 </List>
             </Box>
-
-            {!isHistoricalView && error && <ErrorMessage message={error} sx={{ mb: 2 }} />}
 
             {canAttemptLiveChat && (
                 <Box component="form" onSubmit={handleSendMessage} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

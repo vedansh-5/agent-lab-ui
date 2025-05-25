@@ -3,4 +3,4 @@ firebase-admin
 google-cloud-aiplatform[adk,agent_engines]==1.93.1
 gofannon
 requests # For fetching Gofannon manifest
-# Add any other Python dependencies
+google-cloud-logging>=3.0.0
