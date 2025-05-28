@@ -5,10 +5,14 @@
   <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#000000" />
+  <!--
+    The meta description content will be overridden by App.js,
+    but we provide a fallback here.
+  -->
   <meta
           id="meta-description"
           name="description"
-          content="AI Agent Platform" <!-- Default fallback, will be overridden -->
+          content="AI Agent Platform"
   />
   <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
   <!--
@@ -30,8 +34,8 @@
   <!-- IMPORTANT: This must be placed in the <head> before any Google tags like gtag.js or GTM -->
   <script>
     window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('consent', 'default', {
+    function gtag() { dataLayer.push(arguments); } // Corrected function definition
+    gtag('consent', 'default', { // Corrected: Added { and removed ***
       'ad_storage': 'denied',
       'ad_user_data': 'denied',
       'ad_personalization': 'denied',
@@ -40,7 +44,7 @@
       // 'personalization_storage': 'denied',
       'security_storage': 'granted' // Typically 'granted' for security features
       // wait_for_update: 500 // Optional: milliseconds to wait for an update_consent command
-    });
+    }); // Corrected: Added } and removed ***
     // Example of sending any early data that should be associated with consent
     // gtag('set', 'ads_data_redaction', true); // If using Google Ads
   </script>
