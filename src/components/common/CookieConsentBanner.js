@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Paper, Typography, Button, Box, Link } from '@mui/material';
+import { Paper, Typography, Button, Box } from '@mui/material';
 import * as analyticsService from '../../services/analyticsService';
 
 const CookieConsentBanner = () => {
