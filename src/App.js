@@ -4,7 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Link as RouterLink, useLocation
 import { AuthProvider } from './contexts/AuthContext';
 import { ConfigProvider, useConfig } from './contexts/ConfigContext';
 import { CustomThemeProvider } from './contexts/ThemeContext';
-import { Helmet } from 'react-helmet-async';
+// Helmet import removed
 
 import Navbar from './components/layout/Navbar';
 import HomePage from './pages/HomePage';
@@ -23,23 +23,41 @@ import * as analyticsService from './services/analyticsService';
 import { Box, Container, Typography, Link as MuiLink } from '@mui/material';
 import PlatformUnderConstructionPage from "./pages/PlatformUnderConstructionPage";
 
+// Helper function to update meta tags
+const updateMetaTagContent = (metaId, content) => {
+    const element = document.getElementById(metaId);
+    if (element) {
+        element.setAttribute('content', content);
+    } else {
+        console.warn(`Meta tag with id "${metaId}" not found.`);
+    }
+};
+
 
 function AppInitializer() {
     const { config, loadingConfig, configError } = useConfig();
     const location = useLocation();
+
+    // Effect for setting document title and meta description
+    useEffect(() => {
+        if (!loadingConfig && config) {
+            document.title = config.appTitle || "AgentLabUI";
+            updateMetaTagContent('meta-description', config.appDescription || "Build & Deploy AI Agents");
+        } else if (!loadingConfig && !config && !configError) { // Fallback if config is null but no error
+            document.title = "AgentLabUI"; // Default title
+            updateMetaTagContent('meta-description', "AI Agent Prototyping Platform"); // Default description
+        }
+        // If configError, title/meta will remain as set in index.html or last successful update
+    }, [config, loadingConfig, configError]);
+
 
     // Effect for GA setup (runs once config is loaded)
     useEffect(() => {
         if (!loadingConfig && config) {
             if (config.googleAnalyticsId) {
                 analyticsService.setupGoogleAnalytics(config.googleAnalyticsId);
-
-                // If GDPR consent feature is off, but GA ID exists, grant consent programmatically
-                // This assumes that if the feature flag is off, consent is implied or handled externally.
-                // Ensure this logic aligns with your privacy policy and regional regulations.
                 if (!config.features?.gdprCookieConsent) {
                     console.warn("GA: GDPR consent feature is off, but GA ID is present. Automatically granting analytics consent. Ensure compliance.");
-                    // Only grant if no prior decision (e.g. denial) was stored.
                     if (localStorage.getItem('gdpr-consent-analytics') !== 'denied') {
                         analyticsService.grantAnalyticsConsent();
                     }
@@ -47,7 +65,6 @@ function AppInitializer() {
             }
             if (configError) {
                 console.error("App Configuration Error:", configError);
-                // You could set a global error state here to display a message to the user
             }
         }
     }, [config, loadingConfig, configError]);
@@ -55,11 +72,9 @@ function AppInitializer() {
     // Effect for tracking page views on route changes
     useEffect(() => {
         if (!loadingConfig && config && config.googleAnalyticsId) {
-            // Wait for title to potentially update from Helmet before logging page view
-            const timer = setTimeout(() => {
-                analyticsService.logPageView(location.pathname + location.search);
-            }, 100); // Small delay to allow Helmet to update document.title
-            return () => clearTimeout(timer);
+            // GA will pick up document.title automatically if not explicitly sent.
+            // This ensures the title used by GA is the one most recently set by the effect above or by specific pages.
+            analyticsService.logPageView(location.pathname + location.search, document.title);
         }
     }, [location, config, loadingConfig]);
 
@@ -79,13 +94,7 @@ function AppInitializer() {
 
     return (
         <>
-            <Helmet
-                title={config?.appTitle || "AgentLabUI"} // Default title
-                defaultTitle="AgentLabUI" // Fallback if no title prop is set on a page
-                titleTemplate={`%s | ${config?.appTitle || "Platform"}`} // Template for page-specific titles
-            >
-                <meta name="description" content={config?.appDescription || "Build & Deploy AI Agents"} />
-            </Helmet>
+            {/* Meta tags are now updated directly via DOM manipulation */}
             <AppContent />
             {config?.features?.gdprCookieConsent && <CookieConsentBanner />}
         </>
@@ -101,50 +110,21 @@ function AppContent() {
                 component="main"
                 maxWidth="lg"
                 sx={{
-                    mt: { xs: '56px', sm: '64px' }, // Standard Navbar height
-                    pb: 3, // Padding at the bottom
-                    minHeight: 'calc(100vh - (64px + 24px))' // Adjust if you have a footer
+                    mt: { xs: '56px', sm: '64px' },
+                    pb: 3,
+                    minHeight: 'calc(100vh - (64px + 24px))'
                 }}
             >
                 <Routes>
                     <Route path="/" element={<HomePage />} />
                     <Route path="/unauthorized" element={<UnauthorizedPage />} />
-
-                    {/* Protected Routes */}
-                    <Route
-                        path="/dashboard"
-                        element={<ProtectedRoute><DashboardPage /></ProtectedRoute>}
-                    />
-                    <Route
-                        path="/create-agent"
-                        element={<ProtectedRoute><CreateAgentPage /></ProtectedRoute>}
-                    />
-                    <Route
-                        path="/agent/:agentId/edit"
-                        element={<ProtectedRoute><CreateAgentPage isEditMode={true} /></ProtectedRoute>}
-                    />
-                    <Route
-                        path="/agent/:agentId"
-                        element={<ProtectedRoute><AgentPage /></ProtectedRoute>}
-                    />
-                    <Route
-                        path="/settings"
-                        element={<ProtectedRoute><SettingsPage /></ProtectedRoute>}
-                    />
-                    <Route
-                        path="/platform-under-construction/:platformId"
-                        element={<ProtectedRoute><PlatformUnderConstructionPage /></ProtectedRoute>}
-                    />
-                    <Route
-                        path="/admin"
-                        element={
-                            <ProtectedRoute requireAdmin={true}>
-                                <AdminPage />
-                            </ProtectedRoute>
-                        }
-                    />
-
-                    {/* 404 Not Found */}
+                    <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+                    <Route path="/create-agent" element={<ProtectedRoute><CreateAgentPage /></ProtectedRoute>} />
+                    <Route path="/agent/:agentId/edit" element={<ProtectedRoute><CreateAgentPage isEditMode={true} /></ProtectedRoute>} />
+                    <Route path="/agent/:agentId" element={<ProtectedRoute><AgentPage /></ProtectedRoute>} />
+                    <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+                    <Route path="/platform-under-construction/:platformId" element={<ProtectedRoute><PlatformUnderConstructionPage /></ProtectedRoute>} />
+                    <Route path="/admin" element={<ProtectedRoute requireAdmin={true}><AdminPage /></ProtectedRoute>} />
                     <Route path="*" element={
                         <Box textAlign="center" py={10}>
                             <Typography variant="h3" component="h1" gutterBottom>
@@ -154,8 +134,7 @@ function AppContent() {
                                 Go Home
                             </MuiLink>
                         </Box>
-                    }
-                    />
+                    } />
                 </Routes>
             </Container>
         </>
