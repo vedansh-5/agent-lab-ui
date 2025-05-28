@@ -57,7 +57,7 @@ def delete_vertex_agent(req: https_fn.CallableRequest):
     return _delete_vertex_agent_logic(req)
 
 
-@https_fn.on_call(memory=options.MemoryOption.MB_512, timeout_sec=180) # Moderate resources for querying  
+@https_fn.on_call(memory=options.MemoryOption.GB_2, timeout_sec=180, cpu=1) # Moderate resources for querying
 @handle_exceptions_and_log
 def query_deployed_agent(req: https_fn.CallableRequest):
     """  
