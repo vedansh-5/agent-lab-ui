@@ -14,6 +14,29 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 
+const AGENT_NAME_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const RESERVED_AGENT_NAME = "user";
+
+function validateAgentName(name) {
+    if (!name || !name.trim()) {
+        return "Agent Name is required.";
+    }
+    if (/\s/.test(name)) {
+        return "Agent Name cannot contain spaces.";
+    }
+    if (!AGENT_NAME_REGEX.test(name)) {
+        return "Agent Name must start with a letter or underscore, and can only contain letters, digits, or underscores.";
+    }
+    if (name.toLowerCase() === RESERVED_AGENT_NAME) {
+        return `Agent Name cannot be "${RESERVED_AGENT_NAME}" as it's a reserved name.`;
+    }
+    if (name.length > 63) {
+        return "Agent Name is too long (max 63 characters).";
+    }
+    return null; // No error
+}
+
+
 const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [name, setName] = useState(initialData.name || '');
     const [description, setDescription] = useState(initialData.description || '');
@@ -23,7 +46,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [selectedTools, setSelectedTools] = useState(initialData.tools || []);
     const [maxLoops, setMaxLoops] = useState(initialData.maxLoops || 3);
     const [enableCodeExecution, setEnableCodeExecution] = useState(initialData.enableCodeExecution || false);
-    const [outputKey, setOutputKey] = useState(initialData.outputKey || ''); // For root LlmAgent and LoopAgent's main agent
+    const [outputKey, setOutputKey] = useState(initialData.outputKey || '');
 
     const [childAgents, setChildAgents] = useState(initialData.childAgents || []);
     const [isChildFormOpen, setIsChildFormOpen] = useState(false);
@@ -33,6 +56,25 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [loadingTools, setLoadingTools] = useState(false);
     const [toolError, setToolError] = useState('');
     const [formError, setFormError] = useState('');
+    const [nameError, setNameError] = useState(''); // Specific error for name field
+
+    // Handler for when "Enable Code Execution" checkbox changes
+    const handleCodeExecutionChange = (event) => {
+        const isChecked = event.target.checked;
+        setEnableCodeExecution(isChecked);
+        if (isChecked) {
+            setSelectedTools([]); // Clear selected tools if code execution is enabled
+        }
+    };
+
+    // Handler for when ToolSelector changes selected tools
+    const handleSelectedToolsChange = (newTools) => {
+        setSelectedTools(newTools);
+        if (newTools.length > 0 && enableCodeExecution) {
+            setEnableCodeExecution(false);
+        }
+    };
+
 
     const handleRefreshGofannonTools = async () => {
         setLoadingTools(true);
@@ -64,22 +106,35 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         setAgentType(initialData.agentType || AGENT_TYPES[0]);
         setModel(initialData.model || GEMINI_MODELS[0]);
         setInstruction(initialData.instruction || '');
-        setSelectedTools(initialData.tools || []);
+        const initialEnableCodeExec = initialData.enableCodeExecution || false;
+        setEnableCodeExecution(initialEnableCodeExec);
+        setSelectedTools(initialEnableCodeExec ? [] : (initialData.tools || []));
         setMaxLoops(initialData.maxLoops || 3);
-        setEnableCodeExecution(initialData.enableCodeExecution || false);
-        setOutputKey(initialData.outputKey || ''); // Load outputKey for root/loop main
+        setOutputKey(initialData.outputKey || '');
         setChildAgents(initialData.childAgents || []);
         setFormError('');
+        setNameError(''); // Reset name error on initial data change
     }, [initialData]);
+
+    const handleNameChange = (event) => {
+        const newName = event.target.value;
+        setName(newName);
+        const validationError = validateAgentName(newName);
+        setNameError(validationError || '');
+    };
 
     const handleSubmit = (e) => {
         e.preventDefault();
         setFormError('');
+        setNameError('');
 
-        if (!name.trim()) {
-            setFormError("Agent Name is required.");
+        const agentNameError = validateAgentName(name);
+        if (agentNameError) {
+            setNameError(agentNameError);
+            // setFormError("Please correct the errors above."); // Optional general error
             return;
         }
+
         if ((agentType === 'SequentialAgent' || agentType === 'ParallelAgent') && childAgents.length === 0) {
             setFormError(`A ${agentType} requires at least one child agent/step.`);
             return;
@@ -87,16 +142,15 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
 
         const agentDataToSubmit = {
             name, description, agentType,
-            model, instruction, tools: selectedTools,
+            model, instruction,
+            tools: enableCodeExecution ? [] : selectedTools,
             enableCodeExecution,
-            // outputKey: outputKey.trim() || undefined, // Old logic
         };
 
         const trimmedOutputKey = outputKey.trim();
         if (trimmedOutputKey) {
             agentDataToSubmit.outputKey = trimmedOutputKey;
         }
-
 
         if (agentType === 'LoopAgent') {
             agentDataToSubmit.maxLoops = Number(maxLoops);
@@ -143,18 +197,29 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     if (agentType === 'SequentialAgent') childAgentSectionTitle = "Sequential Steps";
     if (agentType === 'ParallelAgent') childAgentSectionTitle = "Parallel Tasks";
 
+    const codeExecutionDisabledByToolSelection = selectedTools.length > 0;
 
     return (
         <Paper elevation={3} sx={{ p: { xs: 2, md: 4 } }}>
             <Box component="form" onSubmit={handleSubmit} noValidate>
                 <Grid container spacing={3}>
                     <Grid item xs={12}>
-                        <TextField label="Agent Name" id="name" value={name} onChange={(e) => setName(e.target.value)} required fullWidth variant="outlined" />
+                        <TextField
+                            label="Agent Name"
+                            id="name"
+                            value={name}
+                            onChange={handleNameChange} // Use new handler
+                            required
+                            fullWidth
+                            variant="outlined"
+                            error={!!nameError} // Show error state if nameError exists
+                            helperText={nameError || "No spaces. Start with letter or _. Allowed: a-z, A-Z, 0-9, _. Not 'user'."} // Show error or hint
+                        />
                     </Grid>
                     <Grid item xs={12}>
                         <TextField label="Description" id="description" value={description} onChange={(e) => setDescription(e.target.value)} multiline rows={3} fullWidth variant="outlined" />
                     </Grid>
-                    <Grid item xs={12} sm={showParentConfig ? 4 : 6}> {/* Adjust grid sizing */}
+                    <Grid item xs={12} sm={showParentConfig ? 4 : 6}>
                         <FormControl fullWidth variant="outlined">
                             <InputLabel id="agentType-label">Agent Type</InputLabel>
                             <Select labelId="agentType-label" id="agentType" value={agentType} onChange={(e) => setAgentType(e.target.value)} label="Agent Type">
@@ -176,7 +241,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                     </FormHelperText>
                                 </FormControl>
                             </Grid>
-                            <Grid item xs={12} sm={4}> {/* OutputKey for LlmAgent & LoopAgent's main agent */}
+                            <Grid item xs={12} sm={4}>
                                 <TextField
                                     label="Output Key (Optional)"
                                     id="outputKey" value={outputKey} onChange={(e) => setOutputKey(e.target.value)}
@@ -198,13 +263,16 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                     control={
                                         <Checkbox
                                             checked={enableCodeExecution}
-                                            onChange={(e) => setEnableCodeExecution(e.target.checked)}
+                                            onChange={handleCodeExecutionChange}
                                             name="enableCodeExecution"
+                                            disabled={codeExecutionDisabledByToolSelection}
                                         />
                                     }
                                     label="Enable Built-in Code Execution"
                                 />
-                                <FormHelperText sx={{ml:3.5, mt:-0.5}}>(For this agent or its looped child. Requires a Gemini 2 model compatible with code execution.)</FormHelperText>
+                                <FormHelperText sx={{ml:3.5, mt:-0.5}}>
+                                    (For this agent or its looped child. Requires a Gemini 2 model. Cannot be used if other tools are selected.)
+                                </FormHelperText>
                             </Grid>
                             <Grid item xs={12}>
                                 <Typography variant="subtitle1" sx={{mb:1}}>
@@ -213,10 +281,11 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                 <ToolSelector
                                     availableGofannonTools={availableGofannonTools}
                                     selectedTools={selectedTools}
-                                    setSelectedTools={setSelectedTools}
+                                    onSelectedToolsChange={handleSelectedToolsChange}
                                     onRefreshGofannon={handleRefreshGofannonTools}
                                     loadingGofannon={loadingTools}
                                     gofannonError={toolError}
+                                    isCodeExecutionMode={enableCodeExecution}
                                 />
                             </Grid>
                         </>
@@ -239,11 +308,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                             <Typography variant="body2" color="text.secondary" sx={{mb:1}}>
                                 For {agentType === 'SequentialAgent' ? 'Sequential Agents, these are executed in order.' : 'Parallel Agents, these are executed concurrently.'}
                                 Model, Instruction, Tools, Output Key, and Code Execution are configured within each Child Agent/Step.
-                                Any top-level tools selected here are for context or reference only for the orchestrator itself (not typical).
                             </Typography>
-                            {/* Optionally add top-level tools for Orchestrator itself if ever needed:
-                             <ToolSelector ... />
-                             */}
                         </Grid>
                     )}
 
@@ -290,7 +355,8 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                     <Grid item xs={12}>
                         <Button
                             type="submit" variant="contained" color="primary" size="large"
-                            disabled={isSaving} fullWidth
+                            disabled={isSaving || !!nameError} // Disable submit if there's a name error
+                            fullWidth
                             startIcon={isSaving ? <CircularProgress size={20} color="inherit" /> : null}
                         >
                             {isSaving ? 'Saving...' : (initialData.id ? 'Update Agent' : 'Create Agent')}

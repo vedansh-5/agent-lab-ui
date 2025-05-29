@@ -6,8 +6,8 @@ export const GEMINI_MODELS = [
     "gemini-2.5-pro-preview-05-06",
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
-    "gemini-1.5-flash-001",
-    "gemini-1.5-pro-001",
+    // "gemini-1.5-flash-001", // Gemeni 1.5 Break all over the place.
+    // "gemini-1.5-pro-001",
     // 'llama-4-maverick-17b-128e-instruct-maas',
     // 'llama-4-scout-17b-16e-instruct-maas',
     // 'publishers/meta/models/llama-3.3-70b-instruct-maas',
