@@ -2,15 +2,18 @@
 import React, { useState, useEffect } from 'react';
 import ToolSelector from '../tools/ToolSelector';
 import ChildAgentFormDialog from './ChildAgentFormDialog';
+import ExistingAgentSelectorDialog from './ExistingAgentSelectorDialog'; // New import
 import { fetchGofannonTools } from '../../services/agentService';
 import { AGENT_TYPES, GEMINI_MODELS } from '../../constants/agentConstants';
+import { v4 as uuidv4 } from 'uuid'; // For local child IDs
 import {
     TextField, Button, Select, MenuItem, FormControl, InputLabel,
     Paper, Grid, Box, CircularProgress, Typography, IconButton, List,
     ListItem, ListItemText, ListItemSecondaryAction, FormHelperText,
-    Checkbox, FormControlLabel
+    Checkbox, FormControlLabel, Divider, Stack // Added Divider, Stack
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import LibraryAddIcon from '@mui/icons-material/LibraryAdd'; // Icon for existing
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 
@@ -50,31 +53,29 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
 
     const [childAgents, setChildAgents] = useState(initialData.childAgents || []);
     const [isChildFormOpen, setIsChildFormOpen] = useState(false);
-    const [editingChild, setEditingChild] = useState(null);
+    const [isExistingAgentSelectorOpen, setIsExistingAgentSelectorOpen] = useState(false); // New state
+    const [editingChild, setEditingChild] = useState(null); // Stores the child agent object being edited
 
     const [availableGofannonTools, setAvailableGofannonTools] = useState([]);
     const [loadingTools, setLoadingTools] = useState(false);
     const [toolError, setToolError] = useState('');
     const [formError, setFormError] = useState('');
-    const [nameError, setNameError] = useState(''); // Specific error for name field
+    const [nameError, setNameError] = useState('');
 
-    // Handler for when "Enable Code Execution" checkbox changes
     const handleCodeExecutionChange = (event) => {
         const isChecked = event.target.checked;
         setEnableCodeExecution(isChecked);
         if (isChecked) {
-            setSelectedTools([]); // Clear selected tools if code execution is enabled
+            setSelectedTools([]);
         }
     };
 
-    // Handler for when ToolSelector changes selected tools
     const handleSelectedToolsChange = (newTools) => {
         setSelectedTools(newTools);
         if (newTools.length > 0 && enableCodeExecution) {
             setEnableCodeExecution(false);
         }
     };
-
 
     const handleRefreshGofannonTools = async () => {
         setLoadingTools(true);
@@ -111,9 +112,11 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         setSelectedTools(initialEnableCodeExec ? [] : (initialData.tools || []));
         setMaxLoops(initialData.maxLoops || 3);
         setOutputKey(initialData.outputKey || '');
-        setChildAgents(initialData.childAgents || []);
+        // Ensure child agents from initialData also get a local 'id' if they don't have one
+        // This local 'id' is for UI list management and differs from Firestore doc ID.
+        setChildAgents((initialData.childAgents || []).map(ca => ({ ...ca, id: ca.id || uuidv4() })));
         setFormError('');
-        setNameError(''); // Reset name error on initial data change
+        setNameError('');
     }, [initialData]);
 
     const handleNameChange = (event) => {
@@ -131,7 +134,6 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         const agentNameError = validateAgentName(name);
         if (agentNameError) {
             setNameError(agentNameError);
-            // setFormError("Please correct the errors above."); // Optional general error
             return;
         }
 
@@ -156,7 +158,11 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             agentDataToSubmit.maxLoops = Number(maxLoops);
         }
         if (agentType === 'SequentialAgent' || agentType === 'ParallelAgent') {
-            agentDataToSubmit.childAgents = childAgents;
+            // Prepare child agents for submission: strip local UI 'id'
+            agentDataToSubmit.childAgents = childAgents.map(ca => {
+                const { id, ...restOfConfig } = ca; // Remove local UI id
+                return restOfConfig;
+            });
         }
 
         if (initialData && initialData.platform) {
@@ -166,8 +172,13 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         onSubmit(agentDataToSubmit);
     };
 
-    const handleOpenChildForm = (childToEdit = null) => {
-        setEditingChild(childToEdit);
+    const handleOpenChildFormForNew = () => {
+        setEditingChild(null); // For creating a new child
+        setIsChildFormOpen(true);
+    };
+
+    const handleOpenChildFormForEdit = (childToEdit) => {
+        setEditingChild(childToEdit); // Pass the full child object
         setIsChildFormOpen(true);
     };
 
@@ -176,18 +187,46 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         setEditingChild(null);
     };
 
-    const handleSaveChildAgent = (childData) => {
-        if (editingChild) {
-            setChildAgents(prev => prev.map(c => c.id === childData.id ? childData : c));
-        } else {
-            setChildAgents(prev => [...prev, childData]);
-        }
-    };
-
     const handleDeleteChildAgent = (childId) => {
         if (window.confirm("Are you sure you want to remove this child agent/step?")) {
             setChildAgents(prev => prev.filter(c => c.id !== childId));
         }
+    };
+
+    const handleOpenExistingAgentSelector = () => {
+        setIsExistingAgentSelectorOpen(true);
+    };
+
+    const handleExistingAgentSelected = (selectedAgentFullConfig) => {
+        const newChildAgent = {
+            ...selectedAgentFullConfig, // Spread all properties
+            id: uuidv4(), // Assign a new unique local UI id
+            // Ensure agentType is present, default if missing from original config
+            agentType: selectedAgentFullConfig.agentType || AGENT_TYPES[0], // Default to "Agent"
+        };
+
+        if (!selectedAgentFullConfig.agentType) {
+            console.warn(`Existing agent config for "${selectedAgentFullConfig.name}" (Firestore ID: ${selectedAgentFullConfig.id}) is missing agentType. Defaulting to "${AGENT_TYPES[0]}" for this child instance.`);
+        }
+
+        // If the original selectedAgentFullConfig had an 'id' field (from Firestore),
+        // it's now been potentially overwritten by the new uuidv4().
+        // This is generally fine as the 'id' for childAgents in the UI is for local list management.
+        // The backend will use the content of this 'newChildAgent' object to instantiate.
+
+        setChildAgents(prev => [...prev, newChildAgent]);
+        setIsExistingAgentSelectorOpen(false);
+    };
+
+    const handleSaveChildAgent = (childDataFromForm) => {
+        // childDataFromForm should now reliably include 'agentType' from ChildAgentFormDialog
+        if (editingChild && editingChild.id) {
+            setChildAgents(prev => prev.map(c => c.id === editingChild.id ? { ...childDataFromForm, id: editingChild.id } : c));
+        } else {
+            // For new children, ensure agentType is present (should be from dialog, but fallback)
+            setChildAgents(prev => [...prev, { ...childDataFromForm, id: uuidv4(), agentType: childDataFromForm.agentType || AGENT_TYPES[0] }]);
+        }
+        setEditingChild(null);
     };
 
     const showParentConfig = agentType === 'Agent' || agentType === 'LoopAgent';
@@ -203,17 +242,18 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         <Paper elevation={3} sx={{ p: { xs: 2, md: 4 } }}>
             <Box component="form" onSubmit={handleSubmit} noValidate>
                 <Grid container spacing={3}>
+                    {/* ... (name, description, agentType, model, outputKey, instruction, codeExecution, tools - no changes here) ... */}
                     <Grid item xs={12}>
                         <TextField
                             label="Agent Name"
                             id="name"
                             value={name}
-                            onChange={handleNameChange} // Use new handler
+                            onChange={handleNameChange}
                             required
                             fullWidth
                             variant="outlined"
-                            error={!!nameError} // Show error state if nameError exists
-                            helperText={nameError || "No spaces. Start with letter or _. Allowed: a-z, A-Z, 0-9, _. Not 'user'."} // Show error or hint
+                            error={!!nameError}
+                            helperText={nameError || "No spaces. Start with letter or _. Allowed: a-z, A-Z, 0-9, _. Not 'user'."}
                         />
                     </Grid>
                     <Grid item xs={12}>
@@ -256,6 +296,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                     multiline rows={5}
                                     placeholder="e.g., You are a helpful assistant."
                                     fullWidth variant="outlined"
+                                    required={showParentConfig} // Instruction is required for Agent and LoopAgent's "looped agent"
                                 />
                             </Grid>
                             <Grid item xs={12}>
@@ -309,30 +350,44 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                 For {agentType === 'SequentialAgent' ? 'Sequential Agents, these are executed in order.' : 'Parallel Agents, these are executed concurrently.'}
                                 Model, Instruction, Tools, Output Key, and Code Execution are configured within each Child Agent/Step.
                             </Typography>
+                            <Divider sx={{ my: 2 }} /> {/* Added Divider */}
                         </Grid>
                     )}
 
                     {showChildConfig && (
                         <Grid item xs={12}>
                             <Typography variant="h6" gutterBottom>{childAgentSectionTitle}</Typography>
-                            <Button
-                                variant="outlined"
-                                startIcon={<AddCircleOutlineIcon />}
-                                onClick={() => handleOpenChildForm(null)}
-                                sx={{ mb: 2 }}
-                            >
-                                {agentType === 'SequentialAgent' ? 'Add Step' : 'Add Parallel Task'}
-                            </Button>
+                            <Stack direction="row" spacing={1} sx={{ mb: 2 }}> {/* Changed to Stack for buttons */}
+                                <Button
+                                    variant="outlined"
+                                    startIcon={<AddCircleOutlineIcon />}
+                                    onClick={handleOpenChildFormForNew}
+                                >
+                                    {agentType === 'SequentialAgent' ? 'Add New Step' : 'Add New Parallel Task'}
+                                </Button>
+                                <Button
+                                    variant="outlined"
+                                    color="secondary"
+                                    startIcon={<LibraryAddIcon />}
+                                    onClick={handleOpenExistingAgentSelector}
+                                >
+                                    Add Existing Agent as Step
+                                </Button>
+                            </Stack>
                             {childAgents.length > 0 ? (
                                 <List dense sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                                     {childAgents.map((child, index) => (
                                         <ListItem key={child.id || index} divider={index < childAgents.length -1}>
                                             <ListItemText
                                                 primary={`${index + 1}. ${child.name}`}
-                                                secondary={`Model: ${child.model} | Tools: ${child.tools?.length || 0}${child.tools?.some(t => t.configuration) ? ' (some configured)' : ''} | Code Exec: ${child.enableCodeExecution ? 'Yes' : 'No'} | OutputKey: ${child.outputKey || 'N/A'}`}
+                                                secondary={
+                                                    `Type: ${child.agentType || 'Agent'} | Model: ${child.model || 'N/A'} | ` +
+                                                    `Tools: ${child.tools?.length || 0}${child.tools?.some(t => t.configuration) ? ' (some configured)' : ''} | ` +
+                                                    `Code Exec: ${child.enableCodeExecution ? 'Yes' : 'No'} | OutputKey: ${child.outputKey || 'N/A'}`
+                                                }
                                             />
                                             <ListItemSecondaryAction>
-                                                <IconButton edge="end" aria-label="edit" onClick={() => handleOpenChildForm(child)}>
+                                                <IconButton edge="end" aria-label="edit" onClick={() => handleOpenChildFormForEdit(child)}>
                                                     <EditIcon />
                                                 </IconButton>
                                                 <IconButton edge="end" aria-label="delete" onClick={() => handleDeleteChildAgent(child.id)}>
@@ -355,7 +410,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                     <Grid item xs={12}>
                         <Button
                             type="submit" variant="contained" color="primary" size="large"
-                            disabled={isSaving || !!nameError} // Disable submit if there's a name error
+                            disabled={isSaving || !!nameError}
                             fullWidth
                             startIcon={isSaving ? <CircularProgress size={20} color="inherit" /> : null}
                         >
@@ -369,11 +424,17 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                 open={isChildFormOpen}
                 onClose={handleCloseChildForm}
                 onSave={handleSaveChildAgent}
-                childAgentData={editingChild}
+                childAgentData={editingChild} // Pass the actual child object here
                 availableGofannonTools={availableGofannonTools}
                 loadingGofannon={loadingTools}
                 gofannonError={toolError}
                 onRefreshGofannon={handleRefreshGofannonTools}
+            />
+            {/* New Dialog for selecting existing agents */}
+            <ExistingAgentSelectorDialog
+                open={isExistingAgentSelectorOpen}
+                onClose={() => setIsExistingAgentSelectorOpen(false)}
+                onAgentSelected={handleExistingAgentSelected}
             />
         </Paper>
     );
