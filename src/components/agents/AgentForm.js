@@ -23,6 +23,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [selectedTools, setSelectedTools] = useState(initialData.tools || []);
     const [maxLoops, setMaxLoops] = useState(initialData.maxLoops || 3);
     const [enableCodeExecution, setEnableCodeExecution] = useState(initialData.enableCodeExecution || false);
+    const [outputKey, setOutputKey] = useState(initialData.outputKey || ''); // For root LlmAgent and LoopAgent's main agent
 
     const [childAgents, setChildAgents] = useState(initialData.childAgents || []);
     const [isChildFormOpen, setIsChildFormOpen] = useState(false);
@@ -37,14 +38,14 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         setLoadingTools(true);
         setToolError('');
         try {
-            const result = await fetchGofannonTools(); // Returns { success: bool, manifest?: array, message?: string }
+            const result = await fetchGofannonTools();
             if (result.success && Array.isArray(result.manifest)) {
                 setAvailableGofannonTools(result.manifest);
             } else {
                 setToolError(result.message || "Could not load Gofannon tools or manifest is in an unexpected format.");
                 setAvailableGofannonTools([]);
             }
-        } catch (error) { // Should be less likely now as fetchGofannonTools handles its internal errors
+        } catch (error) {
             console.error("Critical error during Gofannon tools fetch in AgentForm:", error);
             setToolError(`Critical failure fetching Gofannon tools: ${error.message}`);
             setAvailableGofannonTools([]);
@@ -66,6 +67,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         setSelectedTools(initialData.tools || []);
         setMaxLoops(initialData.maxLoops || 3);
         setEnableCodeExecution(initialData.enableCodeExecution || false);
+        setOutputKey(initialData.outputKey || ''); // Load outputKey for root/loop main
         setChildAgents(initialData.childAgents || []);
         setFormError('');
     }, [initialData]);
@@ -79,7 +81,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             return;
         }
         if ((agentType === 'SequentialAgent' || agentType === 'ParallelAgent') && childAgents.length === 0) {
-            setFormError(`A ${agentType} requires at least one child agent.`);
+            setFormError(`A ${agentType} requires at least one child agent/step.`);
             return;
         }
 
@@ -87,7 +89,14 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             name, description, agentType,
             model, instruction, tools: selectedTools,
             enableCodeExecution,
+            // outputKey: outputKey.trim() || undefined, // Old logic
         };
+
+        const trimmedOutputKey = outputKey.trim();
+        if (trimmedOutputKey) {
+            agentDataToSubmit.outputKey = trimmedOutputKey;
+        }
+
 
         if (agentType === 'LoopAgent') {
             agentDataToSubmit.maxLoops = Number(maxLoops);
@@ -122,13 +131,18 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     };
 
     const handleDeleteChildAgent = (childId) => {
-        if (window.confirm("Are you sure you want to remove this child agent?")) {
+        if (window.confirm("Are you sure you want to remove this child agent/step?")) {
             setChildAgents(prev => prev.filter(c => c.id !== childId));
         }
     };
 
     const showParentConfig = agentType === 'Agent' || agentType === 'LoopAgent';
     const showChildConfig = agentType === 'SequentialAgent' || agentType === 'ParallelAgent';
+
+    let childAgentSectionTitle = "Child Agents";
+    if (agentType === 'SequentialAgent') childAgentSectionTitle = "Sequential Steps";
+    if (agentType === 'ParallelAgent') childAgentSectionTitle = "Parallel Tasks";
+
 
     return (
         <Paper elevation={3} sx={{ p: { xs: 2, md: 4 } }}>
@@ -140,7 +154,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                     <Grid item xs={12}>
                         <TextField label="Description" id="description" value={description} onChange={(e) => setDescription(e.target.value)} multiline rows={3} fullWidth variant="outlined" />
                     </Grid>
-                    <Grid item xs={12} sm={6}>
+                    <Grid item xs={12} sm={showParentConfig ? 4 : 6}> {/* Adjust grid sizing */}
                         <FormControl fullWidth variant="outlined">
                             <InputLabel id="agentType-label">Agent Type</InputLabel>
                             <Select labelId="agentType-label" id="agentType" value={agentType} onChange={(e) => setAgentType(e.target.value)} label="Agent Type">
@@ -151,7 +165,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
 
                     {showParentConfig && (
                         <>
-                            <Grid item xs={12} sm={6}>
+                            <Grid item xs={12} sm={4}>
                                 <FormControl fullWidth variant="outlined">
                                     <InputLabel id="model-label">Model</InputLabel>
                                     <Select labelId="model-label" id="model" value={model} onChange={(e) => setModel(e.target.value)} label="Model">
@@ -161,6 +175,14 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                         {agentType === 'LoopAgent' ? "Model for the looped agent." : "Model for this agent."} (Gemini 2 for built-in tools/executor)
                                     </FormHelperText>
                                 </FormControl>
+                            </Grid>
+                            <Grid item xs={12} sm={4}> {/* OutputKey for LlmAgent & LoopAgent's main agent */}
+                                <TextField
+                                    label="Output Key (Optional)"
+                                    id="outputKey" value={outputKey} onChange={(e) => setOutputKey(e.target.value)}
+                                    fullWidth variant="outlined"
+                                    helperText={agentType === 'LoopAgent' ? "Looped agent's response saved here." : "Agent's response saved here."}
+                                />
                             </Grid>
                             <Grid item xs={12}>
                                 <TextField
@@ -215,30 +237,34 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                     {showChildConfig && (
                         <Grid item xs={12}>
                             <Typography variant="body2" color="text.secondary" sx={{mb:1}}>
-                                For Sequential/Parallel agents, configure Model, Instruction, Tools, and Code Execution within each Child Agent.
-                                Any tools selected at this parent level for Sequential/Parallel agents are typically for context or reference and might not be directly executed by the orchestrator itself unless explicitly designed to do so.
+                                For {agentType === 'SequentialAgent' ? 'Sequential Agents, these are executed in order.' : 'Parallel Agents, these are executed concurrently.'}
+                                Model, Instruction, Tools, Output Key, and Code Execution are configured within each Child Agent/Step.
+                                Any top-level tools selected here are for context or reference only for the orchestrator itself (not typical).
                             </Typography>
+                            {/* Optionally add top-level tools for Orchestrator itself if ever needed:
+                             <ToolSelector ... />
+                             */}
                         </Grid>
                     )}
 
                     {showChildConfig && (
                         <Grid item xs={12}>
-                            <Typography variant="h6" gutterBottom>Child Agents</Typography>
+                            <Typography variant="h6" gutterBottom>{childAgentSectionTitle}</Typography>
                             <Button
                                 variant="outlined"
                                 startIcon={<AddCircleOutlineIcon />}
                                 onClick={() => handleOpenChildForm(null)}
                                 sx={{ mb: 2 }}
                             >
-                                Add Child Agent
+                                {agentType === 'SequentialAgent' ? 'Add Step' : 'Add Parallel Task'}
                             </Button>
                             {childAgents.length > 0 ? (
                                 <List dense sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                                     {childAgents.map((child, index) => (
                                         <ListItem key={child.id || index} divider={index < childAgents.length -1}>
                                             <ListItemText
-                                                primary={child.name}
-                                                secondary={`Model: ${child.model} | Tools: ${child.tools?.length || 0}${child.tools?.some(t => t.configuration) ? ' (some configured)' : ''} | Code Exec: ${child.enableCodeExecution ? 'Yes' : 'No'}`}
+                                                primary={`${index + 1}. ${child.name}`}
+                                                secondary={`Model: ${child.model} | Tools: ${child.tools?.length || 0}${child.tools?.some(t => t.configuration) ? ' (some configured)' : ''} | Code Exec: ${child.enableCodeExecution ? 'Yes' : 'No'} | OutputKey: ${child.outputKey || 'N/A'}`}
                                             />
                                             <ListItemSecondaryAction>
                                                 <IconButton edge="end" aria-label="edit" onClick={() => handleOpenChildForm(child)}>
@@ -253,7 +279,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                 </List>
                             ) : (
                                 <Typography color="text.secondary" sx={{fontStyle: 'italic'}}>
-                                    No child agents added yet. A {agentType} requires at least one child.
+                                    No child agents/steps added yet. A {agentType} requires at least one.
                                 </Typography>
                             )}
                         </Grid>

@@ -1,8 +1,8 @@
 // src/components/agents/AgentDetailsDisplay.js
 import React from 'react';
-import { Typography, Paper, List, ListItem, ListItemText, Box, Chip } from '@mui/material'; // Added Chip
+import { Typography, Paper, List, ListItem, ListItemText, Box, Chip } from '@mui/material';
 import LoopIcon from '@mui/icons-material/Loop';
-import { getPlatformById } from '../../constants/platformConstants'; // New Import
+import { getPlatformById } from '../../constants/platformConstants';
 
 const AgentDetailsDisplay = ({ agent }) => {
     if (!agent) return null;
@@ -19,7 +19,7 @@ const AgentDetailsDisplay = ({ agent }) => {
                     component="div"
                     sx={{ mb: 1.5, display: 'flex', alignItems: 'center' }}
                 >
-                Platform:&nbsp;
+                    Platform:&nbsp;
                     <Chip label={platformInfo.name} size="small" variant="outlined" />
                 </Typography>
             )}
@@ -33,6 +33,17 @@ const AgentDetailsDisplay = ({ agent }) => {
                         {agent.agentType === 'LoopAgent' ? "Looped Agent Model:" : "Model:"}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" paragraph>{agent.model}</Typography>
+
+                    {agent.outputKey && ( // Display outputKey for Agent and LoopAgent's main config
+                        <>
+                            <Typography variant="subtitle1" fontWeight="medium">
+                                {agent.agentType === 'LoopAgent' ? "Looped Agent Output Key:" : "Output Key:"}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary" paragraph>
+                                {agent.outputKey}
+                            </Typography>
+                        </>
+                    )}
 
                     <Typography variant="subtitle1" fontWeight="medium">
                         {agent.agentType === 'LoopAgent' ? "Looped Agent Instruction:" : "Instruction:"}

@@ -23,8 +23,9 @@ const ChildAgentFormDialog = ({
     const [description, setDescription] = useState('');
     const [model, setModel] = useState(GEMINI_MODELS[0]);
     const [instruction, setInstruction] = useState('');
-    const [selectedTools, setSelectedTools] = useState([]); // Expects array of tool objects {id, name, ..., configuration}
+    const [selectedTools, setSelectedTools] = useState([]);
     const [enableCodeExecution, setEnableCodeExecution] = useState(false);
+    const [outputKey, setOutputKey] = useState('');
     const [formError, setFormError] = useState('');
 
     useEffect(() => {
@@ -33,8 +34,9 @@ const ChildAgentFormDialog = ({
             setDescription(childAgentData.description || '');
             setModel(childAgentData.model || GEMINI_MODELS[0]);
             setInstruction(childAgentData.instruction || '');
-            setSelectedTools(childAgentData.tools || []); // Tools should already have their configuration if set
+            setSelectedTools(childAgentData.tools || []);
             setEnableCodeExecution(childAgentData.enableCodeExecution || false);
+            setOutputKey(childAgentData.outputKey || '');
         } else {
             setName('');
             setDescription('');
@@ -42,6 +44,7 @@ const ChildAgentFormDialog = ({
             setInstruction('');
             setSelectedTools([]);
             setEnableCodeExecution(false);
+            setOutputKey('');
         }
         setFormError('');
     }, [childAgentData, open]);
@@ -55,28 +58,35 @@ const ChildAgentFormDialog = ({
             setFormError('Child agent instruction is required.');
             return;
         }
-        // When saving, selectedTools already contains the configuration if set by ToolSelector
-        onSave({
+
+        const childDataToSave = {
             id: childAgentData?.id || uuidv4(),
             name,
             description,
             model,
             instruction,
-            tools: selectedTools, // Pass the tools array which includes configurations
-            enableCodeExecution
-        });
+            tools: selectedTools,
+            enableCodeExecution,
+            // outputKey: outputKey.trim() || undefined, // Old logic
+        };
+
+        const trimmedOutputKey = outputKey.trim();
+        if (trimmedOutputKey) {
+            childDataToSave.outputKey = trimmedOutputKey;
+        }
+
+        onSave(childDataToSave);
         onClose();
     };
 
     return (
         <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-            <DialogTitle>{childAgentData ? 'Edit Child Agent' : 'Add New Child Agent'}</DialogTitle>
+            <DialogTitle>{childAgentData ? 'Edit Child Agent/Step' : 'Add New Child Agent/Step'}</DialogTitle>
             <DialogContent>
                 <Grid container spacing={2} sx={{ pt: 1 }}>
-                    {/* ... other fields ... */}
                     <Grid item xs={12}>
                         <TextField
-                            label="Child Agent Name"
+                            label="Child Agent/Step Name"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
                             required
@@ -104,6 +114,16 @@ const ChildAgentFormDialog = ({
                             </Select>
                             <FormHelperText>(Gemini 2 for built-in tools/executor)</FormHelperText>
                         </FormControl>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                        <TextField
+                            label="Output Key (Optional)"
+                            value={outputKey}
+                            onChange={(e) => setOutputKey(e.target.value)}
+                            fullWidth
+                            variant="outlined"
+                            helperText="If set, agent's text response is saved to session state under this key."
+                        />
                     </Grid>
                     <Grid item xs={12}>
                         <TextField
@@ -135,8 +155,8 @@ const ChildAgentFormDialog = ({
                     <Grid item xs={12}>
                         <ToolSelector
                             availableGofannonTools={availableGofannonTools}
-                            selectedTools={selectedTools} // Pass the state which includes configurations
-                            setSelectedTools={setSelectedTools} // ToolSelector modifies this directly
+                            selectedTools={selectedTools}
+                            setSelectedTools={setSelectedTools}
                             onRefreshGofannon={onRefreshGofannon}
                             loadingGofannon={loadingGofannon}
                             gofannonError={gofannonError}
@@ -148,11 +168,11 @@ const ChildAgentFormDialog = ({
             <DialogActions>
                 <Button onClick={onClose}>Cancel</Button>
                 <Button onClick={handleSave} variant="contained" color="primary">
-                    {childAgentData ? 'Save Changes' : 'Add Child Agent'}
+                    {childAgentData ? 'Save Changes' : 'Add Child Agent/Step'}
                 </Button>
             </DialogActions>
         </Dialog>
     );
 };
 
-export default ChildAgentFormDialog;  
+export default ChildAgentFormDialog;
