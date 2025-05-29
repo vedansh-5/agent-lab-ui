@@ -5,7 +5,7 @@ import importlib
 import traceback
 from .core import logger
 from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent # ADK Agent classes
-from google.adk.tools.agent_tool import AgentTool # For wrapping agents as tools
+from google.adk.tools.agent_tool import AgentTool
 
 def generate_vertex_deployment_display_name(agent_config_name: str, agent_doc_id: str) -> str:
     # (No changes from your provided code, assuming it's correct)
@@ -78,14 +78,12 @@ def sanitize_adk_agent_name(name_str: str, prefix_if_needed: str = "agent_") -> 
     return sanitized
 
 def _create_code_executor_agent(base_name: str, model: str) -> Agent:
-    """Helper to create a dedicated agent for code execution."""
+    # (No changes from your provided code)
     code_exec_agent_name = sanitize_adk_agent_name(f"{base_name}_code_executor_sub_agent")
     logger.info(f"Creating dedicated Code Executor sub-agent: {code_exec_agent_name}")
-    # This agent's instruction should be minimal, as it's just a utility
-    # Its description will be used by the AgentTool wrapper.
     code_exec_agent = Agent(
         name=code_exec_agent_name,
-        description="An agent that can execute Python code.", # AgentTool will use this
+        description="An agent that can execute Python code.",
         model=model,
         instruction="You are a code execution utility. Execute the provided code.",
         tool_config={"code_execution_config": {"enabled": True}}
@@ -93,10 +91,7 @@ def _create_code_executor_agent(base_name: str, model: str) -> Agent:
     return code_exec_agent
 
 def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context_for_log: str = ""):
-    """
-    Prepares kwargs for ADK Agent instantiation from config, handling tools
-    and code execution according to ADK restrictions.
-    """
+    # (No changes from your provided code)
     logger.info(f"Preparing kwargs for ADK agent '{adk_agent_name}' {context_for_log}. Original config name: '{agent_config.get('name', 'N/A')}'")
 
     instantiated_tools = []
@@ -122,7 +117,6 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
             # Code execution needed alongside other tools; wrap it
             logger.info(f"Agent '{adk_agent_name}' requires code execution AND other tools. Wrapping code execution in an AgentTool.")
             code_executor_sub_agent = _create_code_executor_agent(base_name=adk_agent_name, model=agent_model)
-            # The AgentTool's name and description are taken from the wrapped agent.
             code_execution_agent_tool = AgentTool(agent=code_executor_sub_agent)
             instantiated_tools.append(code_execution_agent_tool)
             logger.info(f"Added AgentTool for code execution to tools list for '{adk_agent_name}'. Main agent tool_config remains None.")
@@ -134,52 +128,117 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         "description": agent_config.get("description"),
         "model": agent_model,
         "instruction": agent_config.get("instruction"),
-        "tools": instantiated_tools, # This now includes AgentTool for code exec if needed
-        "tool_config": final_tool_config_for_agent, # This is None if code exec is wrapped or disabled
-        # Add other LlmAgent specific params if they exist in your agent_config
+        "tools": instantiated_tools,
+        "tool_config": final_tool_config_for_agent,
         "output_key": agent_config.get("outputKey"),
-        # "planner": ... if you support planners
-        # "memory": ... if you support memory
-        # "examples": ...
-        # "include_contents": ...
-        # "before_agent_callback": ... etc.
     }
-    # Filter out None values for cleaner ADK agent instantiation
     return {k: v for k, v in agent_kwargs.items() if v is not None}
 
 
-def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context="parent", child_index=0):
+def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context="root", child_index=0):
     """
-    Instantiates a child ADK Agent from its configuration dictionary.
-    This is used for child agents within SequentialAgent, ParallelAgent.
-    Handles 'enableCodeExecution' by setting the 'tool_config' or wrapping.
+    Recursively instantiates an ADK Agent (LlmAgent, SequentialAgent, LoopAgent, ParallelAgent)
+    from its configuration dictionary.
+    Handles 'enableCodeExecution' by setting 'tool_config' or wrapping.
     """
-    original_child_name = agent_config.get('name', f'child_agent_{child_index}')
-    # Ensure unique base name for ADK, especially if names are not unique in config
-    base_name_for_adk = f"{original_child_name}_{parent_adk_name_for_context}_{os.urandom(3).hex()}"
-    final_child_agent_name = sanitize_adk_agent_name(base_name_for_adk, prefix_if_needed=f"child_{child_index}_")
+    original_agent_name = agent_config.get('name', f'agent_cfg_{child_index}')
+    unique_base_name_for_adk = f"{original_agent_name}_{parent_adk_name_for_context}_{os.urandom(2).hex()}"
+    adk_agent_name = sanitize_adk_agent_name(unique_base_name_for_adk, prefix_if_needed=f"agent_{child_index}_")
 
-    agent_kwargs = _prepare_agent_kwargs_from_config(
-        agent_config,
-        final_child_agent_name,
-        context_for_log=f"(child of {parent_adk_name_for_context}, index {child_index})"
-    )
+    agent_type_str = agent_config.get("agentType")
+    AgentClass = {
+        "Agent": Agent,
+        "SequentialAgent": SequentialAgent,
+        "LoopAgent": LoopAgent,
+        "ParallelAgent": ParallelAgent
+    }.get(agent_type_str)
 
-    logger.debug(f"Instantiating Child ADK Agent '{final_child_agent_name}' with kwargs: {agent_kwargs}")
-    try:
-        return Agent(**agent_kwargs) # Assumes all children are LlmAgent (Agent alias)
-    except Exception as e_child_init:
-        logger.error(f"Pydantic or Init Error during Child Agent '{final_child_agent_name}' instantiation: {e_child_init}")
-        logger.error(f"Args passed to child Agent constructor: {agent_kwargs}")
-        detailed_traceback = traceback.format_exc()
-        logger.error(f"Traceback for child agent init error:\n{detailed_traceback}")
-        raise ValueError(f"Failed to instantiate child agent '{original_child_name}': {e_child_init}. Check logs for Pydantic validation details against these args: {list(agent_kwargs.keys())}")
+    if not AgentClass:
+        error_msg = f"Invalid agentType specified: '{agent_type_str}' for agent config: {original_agent_name}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.info(f"Instantiating ADK Agent: Name='{adk_agent_name}', Type='{AgentClass.__name__}', Original Config Name='{original_agent_name}' (Context: parent='{parent_adk_name_for_context}', index={child_index})")
+
+    if AgentClass == Agent: # This is LlmAgent
+        agent_kwargs = _prepare_agent_kwargs_from_config(
+            agent_config,
+            adk_agent_name,
+            context_for_log=f"(type: LlmAgent, parent: {parent_adk_name_for_context}, original: {original_agent_name})"
+        )
+        logger.debug(f"Final kwargs for LlmAgent '{adk_agent_name}': {agent_kwargs}")
+        try:
+            return Agent(**agent_kwargs)
+        except Exception as e_agent_init:
+            logger.error(f"Initialization Error for LlmAgent '{adk_agent_name}' (from config '{original_agent_name}'): {e_agent_init}")
+            logger.error(f"Args passed: {agent_kwargs}")
+            detailed_traceback = traceback.format_exc()
+            logger.error(f"Traceback:\n{detailed_traceback}")
+            raise ValueError(f"Failed to instantiate LlmAgent '{original_agent_name}': {e_agent_init}.")
+
+    elif AgentClass == SequentialAgent or AgentClass == ParallelAgent:
+        child_agent_configs = agent_config.get("childAgents", [])
+        if not child_agent_configs:
+            raise ValueError(f"{AgentClass.__name__} '{original_agent_name}' requires at least one child agent in its configuration.")
+
+        instantiated_child_agents = []
+        for idx, child_config in enumerate(child_agent_configs):
+            try:
+                child_agent_instance = instantiate_adk_agent_from_config( # Recursive call
+                    child_config,
+                    parent_adk_name_for_context=adk_agent_name,
+                    child_index=idx
+                )
+                instantiated_child_agents.append(child_agent_instance)
+            except Exception as e_child:
+                logger.error(f"Failed to instantiate child agent at index {idx} for {AgentClass.__name__} '{original_agent_name}': {e_child}")
+                raise ValueError(f"Error processing child agent for '{original_agent_name}': {e_child}")
+
+        orchestrator_kwargs = {
+            "name": adk_agent_name,
+            "description": agent_config.get("description"),
+            "sub_agents": instantiated_child_agents
+        }
+        logger.debug(f"Final kwargs for {AgentClass.__name__} '{adk_agent_name}': {{name, description, num_sub_agents: {len(instantiated_child_agents)}}}")
+        return AgentClass(**orchestrator_kwargs)
+
+    elif AgentClass == LoopAgent:
+        looped_agent_config_name = f"{original_agent_name}_looped_child_config"
+        looped_agent_adk_name = sanitize_adk_agent_name(f"{adk_agent_name}_looped_child_instance", prefix_if_needed="looped_")
+
+        looped_agent_kwargs = _prepare_agent_kwargs_from_config(
+            agent_config,
+            looped_agent_adk_name,
+            context_for_log=f"(looped child of {adk_agent_name}, original: {looped_agent_config_name})"
+        )
+        logger.debug(f"Final kwargs for Looped Child ADK Agent '{looped_agent_adk_name}' (for LoopAgent '{adk_agent_name}'): {looped_agent_kwargs}")
+        try:
+            looped_child_agent_instance = Agent(**looped_agent_kwargs)
+        except Exception as e_loop_child_init:
+            logger.error(f"Initialization Error for Looped Child Agent '{looped_agent_adk_name}' (from config '{looped_agent_config_name}'): {e_loop_child_init}")
+            logger.error(f"Args passed to looped child Agent constructor: {looped_agent_kwargs}")
+            detailed_traceback = traceback.format_exc()
+            logger.error(f"Traceback:\n{detailed_traceback}")
+            raise ValueError(f"Failed to instantiate looped child agent for '{original_agent_name}': {e_loop_child_init}.")
+
+        max_loops_val = int(agent_config.get("maxLoops", 3))
+        loop_agent_kwargs = {
+            "name": adk_agent_name,
+            "description": agent_config.get("description"),
+            "agent": looped_child_agent_instance,
+            "max_loops": max_loops_val
+        }
+        logger.debug(f"Final kwargs for LoopAgent '{adk_agent_name}': {{name, description, max_loops, agent_name: {looped_child_agent_instance.name}}}")
+        return LoopAgent(**loop_agent_kwargs)
+
+    else:
+        raise ValueError(f"Unhandled agent type '{agent_type_str}' during recursive instantiation for '{original_agent_name}'.")
 
 
 __all__ = [
     'generate_vertex_deployment_display_name',
     'instantiate_tool',
     'sanitize_adk_agent_name',
-    'instantiate_adk_agent_from_config',
-    '_prepare_agent_kwargs_from_config' # Export if needed by deployment_logic directly
+    '_prepare_agent_kwargs_from_config',
+    'instantiate_adk_agent_from_config'
 ]  
