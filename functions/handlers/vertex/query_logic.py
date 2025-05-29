@@ -22,7 +22,7 @@ def get_reasoning_engine_id_from_name(resource_name: str) -> str | None:
     parts = resource_name.split('/')
     if len(parts) == 6 and parts[0] == 'projects' and parts[2] == 'locations' and parts[4] == 'reasoningEngines':
         return parts[5]
-    logger.warning(f"Could not parse reasoning_engine_id from resource_name: {resource_name}")
+    logger.warn(f"Could not parse reasoning_engine_id from resource_name: {resource_name}")
     return None
 
 def _fetch_vertex_logs_sync(project_id: str, location: str, reasoning_engine_id: str, adk_session_id: str | None, start_time_dt_aware: datetime):
@@ -135,9 +135,9 @@ async def _query_async_logic_internal(resource_name, message_text, adk_user_id, 
         try:
             retrieved_session = await session_service.get_session(app_name=resource_name, user_id=adk_user_id, session_id=session_id_from_client)
             if retrieved_session: current_adk_session_id = retrieved_session.id
-            else: logger.warning(f"Query Prep: get_session for '{session_id_from_client}' returned None.")
+            else: logger.warn(f"Query Prep: get_session for '{session_id_from_client}' returned None.")
         except Exception as e:
-            logger.warning(f"Query Prep: Failed to retrieve session '{session_id_from_client}'. Error: {e}. Will create new.")
+            logger.warn(f"Query Prep: Failed to retrieve session '{session_id_from_client}'. Error: {e}. Will create new.")
     if not current_adk_session_id:
         try:
             new_session = await session_service.create_session(app_name=resource_name, user_id=adk_user_id)
@@ -174,7 +174,7 @@ async def _query_async_logic_internal(resource_name, message_text, adk_user_id, 
         if reasoning_engine_id_val:
             fetched_log_errors = await fetch_vertex_logs(project_id, location, reasoning_engine_id_val, current_adk_session_id, query_start_time_utc)
         else:
-            logger.warning("Could not determine reasoning_engine_id; skipping Vertex log fetch.")
+            logger.warn("Could not determine reasoning_engine_id; skipping Vertex log fetch.")
 
     if not final_text_response and not query_error_details_from_stream and not fetched_log_errors and all_events:
         logger.info(f"Query Fallback: No text_delta, checking last events for session {current_adk_session_id}")
@@ -189,7 +189,7 @@ async def _query_async_logic_internal(resource_name, message_text, adk_user_id, 
     combined_errors = query_error_details_from_stream + fetched_log_errors
     if not combined_errors and not final_text_response and not all_events:
         combined_errors.append("Agent produced no events and no text response. Check Vertex logs for deployment or runtime issues.")
-        logger.warning(f"Query for session {current_adk_session_id} resulted in no events and no text response.")
+        logger.warn(f"Query for session {current_adk_session_id} resulted in no events and no text response.")
 
     return {
         "events": all_events, "responseText": final_text_response,

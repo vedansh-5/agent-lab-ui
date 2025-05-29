@@ -12,10 +12,15 @@ const ChildAgentsDisplay = ({ agent }) => {
         return null;
     }
 
+    let childAgentSectionTitle = "Child Agents";
+    if (agent.agentType === 'SequentialAgent') childAgentSectionTitle = "Sequential Steps";
+    if (agent.agentType === 'ParallelAgent') childAgentSectionTitle = "Parallel Tasks";
+
+
     return (
         <Box mt={3}>
             <Typography variant="h6" component="h3" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
-                <AccountTreeIcon sx={{ mr: 1 }} /> Child Agents ({agent.childAgents.length})
+                <AccountTreeIcon sx={{ mr: 1 }} /> {childAgentSectionTitle} ({agent.childAgents.length})
             </Typography>
             <Box sx={{ maxHeight: '400px', overflowY: 'auto' }}>
                 {agent.childAgents.map((child, index) => (
@@ -23,11 +28,17 @@ const ChildAgentsDisplay = ({ agent }) => {
                         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                             <Typography sx={{ fontWeight: 'medium' }}>{index + 1}. {child.name}</Typography>
                             <Chip label={`Model: ${child.model}`} size="small" sx={{ ml: 2 }} variant="outlined" />
+                            {child.outputKey && <Chip label={`Output: ${child.outputKey}`} size="small" sx={{ ml: 1 }} variant="outlined" color="info" />}
                         </AccordionSummary>
                         <AccordionDetails sx={{ bgcolor: 'action.hover', borderTop: '1px solid', borderColor: 'divider' }}>
                             {child.description && (
                                 <Typography variant="body2" color="text.secondary" paragraph>
                                     <strong>Description:</strong> {child.description}
+                                </Typography>
+                            )}
+                            {child.outputKey && (
+                                <Typography variant="body2" color="text.secondary" paragraph>
+                                    <strong>Output Key:</strong> {child.outputKey}
                                 </Typography>
                             )}
                             <Typography variant="body2" paragraph>
@@ -48,7 +59,7 @@ const ChildAgentsDisplay = ({ agent }) => {
                                     </List>
                                 </>
                             ) : (
-                                <Typography variant="body2" color="text.secondary">No tools for this child agent.</Typography>
+                                <Typography variant="body2" color="text.secondary">No tools for this child agent/step.</Typography>
                             )}
                         </AccordionDetails>
                     </Accordion>

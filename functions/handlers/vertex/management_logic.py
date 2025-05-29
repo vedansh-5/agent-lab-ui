@@ -93,7 +93,7 @@ def _check_vertex_agent_deployment_status_logic(req: https_fn.CallableRequest):
                     found_engine_proto = engine
                     identification_method = "by stored resource_name"
                 else:
-                    logger.warning(f"Stored resource '{current_stored_resource_name}' for agent '{agent_doc_id}' has mismatched display_name on Vertex ('{engine.display_name}' vs expected '{expected_vertex_display_name}'). Will attempt to list.")
+                    logger.warn(f"Stored resource '{current_stored_resource_name}' for agent '{agent_doc_id}' has mismatched display_name on Vertex ('{engine.display_name}' vs expected '{expected_vertex_display_name}'). Will attempt to list.")
             except Exception as e: # Use a more generic Exception to catch gRPC errors too
                 logger.info(f"Failed to get engine by stored resource_name '{current_stored_resource_name}' for agent '{agent_doc_id}'. Error: {type(e).__name__} - {e}. Will attempt listing by display_name.")
                 # If stored resource name is not found, it might have been deleted. Clear it.
@@ -107,7 +107,7 @@ def _check_vertex_agent_deployment_status_logic(req: https_fn.CallableRequest):
             engine_list_results = list(reasoning_engine_client.list_reasoning_engines(request=list_request))
 
             if engine_list_results:
-                if len(engine_list_results) > 1: logger.warning(f"Multiple ({len(engine_list_results)}) engines found for display_name '{expected_vertex_display_name}'. Using the first one: {[e.name for e in engine_list_results]}.")
+                if len(engine_list_results) > 1: logger.warn(f"Multiple ({len(engine_list_results)}) engines found for display_name '{expected_vertex_display_name}'. Using the first one: {[e.name for e in engine_list_results]}.")
                 found_engine_proto = engine_list_results[0]
                 identification_method = "by listing via display_name"
                 logger.info(f"Found engine '{found_engine_proto.name}' via display_name listing.")
@@ -147,11 +147,11 @@ def _check_vertex_agent_deployment_status_logic(req: https_fn.CallableRequest):
                 firestore_update_payload["deploymentError"] = error_details[:1000] # Limit length
             else: # Other states like DELETING, etc.
                 final_status_to_report = f"unknown_vertex_state_{current_engine_vertex_state.name.lower()}"
-                logger.warning(f"Engine '{found_engine_proto.name}' is in an unhandled state: {current_engine_vertex_state.name}")
+                logger.warn(f"Engine '{found_engine_proto.name}' is in an unhandled state: {current_engine_vertex_state.name}")
 
             firestore_update_payload["deploymentStatus"] = final_status_to_report
         else: # Engine not found on Vertex
-            logger.warning(f"Engine for agent '{agent_doc_id}' (expected display_name: '{expected_vertex_display_name}') was NOT found on Vertex AI by any method.")
+            logger.warn(f"Engine for agent '{agent_doc_id}' (expected display_name: '{expected_vertex_display_name}') was NOT found on Vertex AI by any method.")
             current_fs_status = agent_data.get("deploymentStatus")
             if current_fs_status in ["deploying_initiated", "deploying_in_progress"]:
                 final_status_to_report = "error_not_found_after_init"
