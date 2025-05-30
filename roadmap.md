@@ -7,6 +7,8 @@ This page tracks the implementation status of various Agent Development Kit (ADK
 *   ✅ : Implemented / Natively Supported by the UI
 *   🚧 : Not yet implemented in the UI / Support is indirect or requires manual ADK coding outside the UI
 *   ❓ : Status Unknown / To Be Determined
+*   🙈 : Feature not available in this framework
+*   ❌ : Will not implement / Not in Roadmap
 
 | Feature Category          | Feature Name                                        | AgentLabUI (via ADK) | LlamaStack | AWS Bedrock |  
 |---------------------------|-----------------------------------------------------|----------------------|------------|-------------|  
