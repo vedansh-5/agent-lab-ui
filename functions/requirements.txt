@@ -1,6 +1,0 @@
-firebase_functions>=0.2.0
-firebase-admin
-google-cloud-aiplatform[adk,agent_engines]==1.93.1
-gofannon
-requests # For fetching Gofannon manifest
-google-cloud-logging>=3.0.0
