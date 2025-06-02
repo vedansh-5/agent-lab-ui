@@ -3,14 +3,12 @@ import traceback
 from firebase_admin import firestore
 from firebase_functions import https_fn
 from vertexai import agent_engines as deployed_agent_engines
-# ADK Agent classes (Agent, SequentialAgent, LoopAgent, ParallelAgent)
-# are now imported by common.adk_helpers.instantiate_adk_agent_from_config
 
 from common.core import db, logger
 from common.utils import initialize_vertex_ai
 from common.adk_helpers import (
     generate_vertex_deployment_display_name,
-    instantiate_adk_agent_from_config, # This is the main recursive instantiator
+    instantiate_adk_agent_from_config,
 )
 
 def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
@@ -38,13 +36,11 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
     adk_agent = None
 
     try:
-        # Use the recursive instantiation function for the root agent config
-        # parent_adk_name_for_context can be more specific if needed, e.g., derived from agent_doc_id
         adk_agent = instantiate_adk_agent_from_config(agent_config_data, parent_adk_name_for_context=f"root_{agent_doc_id[:4]}")
         logger.info(f"Root ADK Agent object '{adk_agent.name}' of type {type(adk_agent).__name__} prepared for deployment.")
     except ValueError as e_instantiate:
         error_msg = f"Failed to instantiate agent hierarchy for '{agent_doc_id}' (Original Name: '{original_config_name}'): {str(e_instantiate)}"
-        logger.error(error_msg) # The instantiate_adk_agent_from_config should log detailed tracebacks
+        logger.error(error_msg)
         db.collection("agents").document(agent_doc_id).update({"deploymentStatus": "error", "deploymentError": error_msg, "lastDeployedAt": firestore.SERVER_TIMESTAMP})
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message=error_msg)
     except Exception as e_unhandled_instantiate:
@@ -53,7 +49,6 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
         db.collection("agents").document(agent_doc_id).update({"deploymentStatus": "error", "deploymentError": error_msg, "lastDeployedAt": firestore.SERVER_TIMESTAMP})
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=error_msg)
 
-        # This check should ideally not be hit if instantiate_adk_agent_from_config raises on failure
     if adk_agent is None:
         error_msg = f"ADK Agent object could not be constructed for agent '{agent_doc_id}' (Original Name: '{original_config_name}'). This is unexpected after instantiation attempt."
         logger.error(error_msg)
@@ -61,11 +56,29 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=error_msg)
 
         # --- Deployment to Vertex AI ---
+    # Base requirements
     requirements_list = ["google-cloud-aiplatform[adk,agent_engines]>=1.93.1", "gofannon"]
-    # Use original_config_name for a more user-friendly display name generation base
+
+    # Add custom tool repositories if provided
+    custom_repo_urls = agent_config_data.get("usedCustomRepoUrls", [])
+    if isinstance(custom_repo_urls, list):
+        for repo_url in custom_repo_urls:
+            if isinstance(repo_url, str) and repo_url.strip():
+                # Basic validation: should start with http/https or git+
+                if repo_url.startswith("https://") or repo_url.startswith("http://") or repo_url.startswith("git+"):
+                    # ADK expects pip installable format, e.g., git+https://...
+                    pip_install_url = repo_url if repo_url.startswith("git+") else f"git+{repo_url}"
+                    if pip_install_url not in requirements_list: # Avoid duplicates
+                        requirements_list.append(pip_install_url)
+                        logger.info(f"Added custom tool repository to requirements: {pip_install_url}")
+                else:
+                    logger.warning(f"Skipping invalid custom repository URL: {repo_url}")
+        logger.info(f"Final requirements list for ADK deployment: {requirements_list}")
+
+
     deployment_display_name = generate_vertex_deployment_display_name(original_config_name, agent_doc_id)
 
-    logger.info(f"Attempting to deploy ADK agent '{adk_agent.name}' (from original config '{original_config_name}') to Vertex AI with display_name: '{deployment_display_name}'.")
+    logger.info(f"Attempting to deploy ADK agent '{adk_agent.name}' (from original config '{original_config_name}') to Vertex AI with display_name: '{deployment_display_name}'. Requirements: {requirements_list}")
 
     try:
         remote_app = deployed_agent_engines.create(
@@ -102,4 +115,4 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
         if isinstance(e_deploy, https_fn.HttpsError): raise
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=f"Deployment to Vertex AI failed: {str(e_deploy)[:300]}. See function logs for details.")
 
-__all__ = ['_deploy_agent_to_vertex_logic'] # Ensure this is exported if main.py calls it directly  
+__all__ = ['_deploy_agent_to_vertex_logic']

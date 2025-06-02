@@ -2,11 +2,10 @@
 import React, { useState, useEffect } from 'react';
 import {
     Accordion, AccordionSummary, AccordionDetails, Box, Typography, Paper, Chip,
-    Alert, AlertTitle
+    Alert
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PageviewIcon from '@mui/icons-material/Pageview';
-import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import Inventory2Icon from '@mui/icons-material/Inventory2'; // For artifacts
 
 const RunHistoryItem = ({ run, index, onSelectRun }) => {
