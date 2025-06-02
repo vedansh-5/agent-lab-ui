@@ -11,22 +11,17 @@ const checkVertexAgentDeploymentStatusCallable = createCallable('check_vertex_ag
 export const fetchGofannonTools = async () => {
     try {
         const result = await getGofannonToolManifestCallable();
-        // The backend function _get_gofannon_tool_manifest_logic now returns
-        // { success: true, manifest: tools_array_from_manifest }
-        // where tools_array_from_manifest is manifest_root_object["tools"]
         if (result.data && result.data.success && Array.isArray(result.data.manifest)) {
             return { success: true, manifest: result.data.manifest };
         } else if (result.data && result.data.success) {
-            // This case should ideally not be hit if backend is correct, but good for robustness
             console.error("Gofannon manifest received, but 'manifest' is not an array:", result.data.manifest);
             return { success: false, message: "Manifest format error: Expected an array of tools in the 'manifest' field." };
         }
-        // Handle cases where result.data.success is false or result.data structure is unexpected
         const errorMessage = result.data?.message || "Failed to fetch Gofannon tools due to an unknown error structure.";
         console.error("Error fetching Gofannon tools from callable:", result.data);
         return { success: false, message: errorMessage };
 
-    } catch (error) { // Catch errors from the callable function itself (e.g., network error, Firebase internal error)
+    } catch (error) {
         console.error("Error calling Gofannon tools callable function:", error);
         const message = error.message || "An unexpected error occurred while fetching Gofannon tools.";
         return { success: false, message: message };
@@ -34,7 +29,11 @@ export const fetchGofannonTools = async () => {
 };
 
 export const deployAgent = async (agentConfig, agentDocId) => {
+    // agentConfig is expected to have `name`, `description`, `tools`, `usedCustomRepoUrls`, etc.
+    // The `usedCustomRepoUrls` property is new.
     try {
+        // The agentConfig passed here should already have `usedCustomRepoUrls`
+        // as assembled by AgentForm.js
         const result = await deployAgentToVertexCallable({ agentConfig, agentDocId });
         return result.data;
     } catch (error) {
