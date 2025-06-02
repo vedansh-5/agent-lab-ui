@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions, Button,
-    List, ListItem, ListItemButton, ListItemText, CircularProgress, Alert, Typography, Box
+    List, ListItemButton, ListItemText, CircularProgress, Alert, Typography, Box
 } from '@mui/material';
 import { getUserAgents } from '../../services/firebaseService'; // Assuming this fetches all agents for the user
 import { useAuth } from '../../contexts/AuthContext';
