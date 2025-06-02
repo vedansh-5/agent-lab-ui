@@ -1,5 +1,7 @@
 # functions/handlers/vertex/deployment_logic.py
 import traceback
+import re # Ensure re is imported
+import time # Ensure time is imported
 from firebase_admin import firestore
 from firebase_functions import https_fn
 from vertexai import agent_engines as deployed_agent_engines
@@ -62,18 +64,75 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
     # Add custom tool repositories if provided
     custom_repo_urls = agent_config_data.get("usedCustomRepoUrls", [])
     if isinstance(custom_repo_urls, list):
-        for repo_url in custom_repo_urls:
-            if isinstance(repo_url, str) and repo_url.strip():
-                # Basic validation: should start with http/https or git+
-                if repo_url.startswith("https://") or repo_url.startswith("http://") or repo_url.startswith("git+"):
-                    # ADK expects pip installable format, e.g., git+https://...
-                    pip_install_url = repo_url if repo_url.startswith("git+") else f"git+{repo_url}"
-                    if pip_install_url not in requirements_list: # Avoid duplicates
-                        requirements_list.append(pip_install_url)
-                        logger.info(f"Added custom tool repository to requirements: {pip_install_url}")
+        for repo_url_original in custom_repo_urls:
+            if isinstance(repo_url_original, str) and repo_url_original.strip():
+                repo_url_raw = repo_url_original.strip()
+
+                if not (repo_url_raw.startswith("https://") or repo_url_raw.startswith("http://") or repo_url_raw.startswith("git+")):
+                    logger.warning(f"Skipping invalid custom repository URL (scheme): {repo_url_raw}")
+                    continue
+
+                base_url_for_pip = repo_url_raw
+                fragment_str = ""
+                if "#" in repo_url_raw:
+                    base_url_for_pip, fragment_str = repo_url_raw.split("#", 1)
+
+                if not base_url_for_pip.startswith("git+"):
+                    base_url_for_pip = "git+" + base_url_for_pip
+
+                    # Check for specific ref like @commit, @branch, @tag in the base_url_for_pip
+                # A ref is part of the URL path before any #fragment
+                # e.g., git+https://server/path/repo@ref.git or git+https://server/path/repo.git@ref
+                has_specific_ref = "@" in base_url_for_pip.split("://", 1)[-1]
+
+                # Determine egg_name
+                parsed_egg_name = None
+                if fragment_str and "egg=" in fragment_str:
+                    match = re.search(r"egg=([^&\[\]]+)", fragment_str) # Get content of egg= up to an extra or end
+                    if match:
+                        parsed_egg_name = match.group(1)
+
+                if not parsed_egg_name:
+                    # Guess egg_name from URL path (part before any @ref or #fragment)
+                    url_path_for_egg_guess = base_url_for_pip.replace("git+", "").split('@')[0].split('#')[0]
+                    egg_name_match = re.search(r'/([^/]+?)(?:\.git)?$', url_path_for_egg_guess)
+                    parsed_egg_name = egg_name_match.group(1) if egg_name_match else f"customrepo{int(time.time())}"
+
+                sanitized_egg_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', parsed_egg_name)
+
+                # Construct the final pip URL
+                # The base_url_for_pip already includes git+ and any @ref
+                final_pip_url_with_egg = f"{base_url_for_pip}#egg={sanitized_egg_name}"
+
+                if not has_specific_ref:
+                    # If no specific ref, append a timestamped extra to the egg name to force refresh
+                    timestamp_extra = f"[upd{int(time.time())}]"
+                    final_pip_url_with_egg_and_extra = f"{base_url_for_pip}#egg={sanitized_egg_name}{timestamp_extra}"
+                    final_install_string = final_pip_url_with_egg_and_extra
                 else:
-                    logger.warning(f"Skipping invalid custom repository URL: {repo_url}")
-        logger.info(f"Final requirements list for ADK deployment: {requirements_list}")
+                    # If a specific ref is present, just ensure egg name is there.
+                    final_install_string = final_pip_url_with_egg
+
+                    # Preserve other original fragment parts if they existed and weren't egg=
+                other_fragment_parts = []
+                if fragment_str:
+                    for part in fragment_str.split('&'):
+                        if not part.startswith("egg="):
+                            other_fragment_parts.append(part)
+                if other_fragment_parts: # Append them back if any
+                    if "#" not in final_install_string: # Should always be true here as we just added #egg=
+                        final_install_string += "&" + "&".join(other_fragment_parts)
+                    else: # If #egg= was already the start of the fragment
+                        final_install_string += "&" + "&".join(other_fragment_parts)
+
+
+                if final_install_string not in requirements_list:
+                    requirements_list.append(final_install_string)
+                    logger.info(f"Added custom tool repository to requirements: {final_install_string}")
+                else:
+                    logger.info(f"Custom tool repository already in requirements (or duplicate attempt): {final_install_string}")
+            else:
+                logger.warning(f"Skipping non-string or empty custom repository URL: {repo_url_original}")
 
 
     deployment_display_name = generate_vertex_deployment_display_name(original_config_name, agent_doc_id)

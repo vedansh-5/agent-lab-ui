@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import {
     TextField, Button, Select, MenuItem, FormControl, InputLabel,
     Grid, Dialog, DialogTitle, DialogContent, DialogActions, FormHelperText,
-    Checkbox, FormControlLabel, Typography // Added Typography
+    Checkbox, FormControlLabel, Typography
 } from '@mui/material';
 import { v4 as uuidv4 } from 'uuid';
 import ToolSelector from '../tools/ToolSelector';
@@ -45,7 +45,6 @@ const ChildAgentFormDialog = ({
                               }) => {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
-    // This state will hold the agentType of the child being edited/created.
     const [currentChildAgentType, setCurrentChildAgentType] = useState(AGENT_TYPES[0]);
     const [model, setModel] = useState(GEMINI_MODELS[0]);
     const [instruction, setInstruction] = useState('');
@@ -55,11 +54,20 @@ const ChildAgentFormDialog = ({
     const [formError, setFormError] = useState('');
     const [nameError, setNameError] = useState('');
 
+    // New state for usedCustomRepoUrls for this child agent
+    const [usedCustomRepoUrls, setUsedCustomRepoUrls] = useState([]);
+
+    // New handler for usedCustomRepoUrls change from ToolSelector
+    const handleUsedCustomRepoUrlsChange = (urls) => {
+        setUsedCustomRepoUrls(urls);
+    };
+
     const handleCodeExecutionChange = (event) => {
         const isChecked = event.target.checked;
         setEnableCodeExecution(isChecked);
         if (isChecked) {
             setSelectedTools([]);
+            setUsedCustomRepoUrls([]); // Clear custom repos if code execution is on
         }
     };
 
@@ -68,28 +76,47 @@ const ChildAgentFormDialog = ({
         if (newTools.length > 0 && enableCodeExecution) {
             setEnableCodeExecution(false);
         }
+        // Update usedCustomRepoUrls based on newTools for this child
+        const currentCustomRepoUrls = newTools
+            .filter(st => st.type === 'custom_repo' && st.sourceRepoUrl)
+            .map(st => st.sourceRepoUrl);
+        setUsedCustomRepoUrls(Array.from(new Set(currentCustomRepoUrls)));
     };
 
     useEffect(() => {
         if (childAgentData) { // Editing an existing child
             setName(childAgentData.name || '');
             setDescription(childAgentData.description || '');
-            setCurrentChildAgentType(childAgentData.agentType || AGENT_TYPES[0]); // Use existing, or default "Agent"
+            setCurrentChildAgentType(childAgentData.agentType || AGENT_TYPES[0]);
             setModel(childAgentData.model || GEMINI_MODELS[0]);
             setInstruction(childAgentData.instruction || '');
             const initialEnableCodeExec = childAgentData.enableCodeExecution || false;
             setEnableCodeExecution(initialEnableCodeExec);
             setSelectedTools(initialEnableCodeExec ? [] : (childAgentData.tools || []));
             setOutputKey(childAgentData.outputKey || '');
-        } else { // Creating a new child from scratch via "Add New Step"
+
+            // Initialize usedCustomRepoUrls for the child being edited
+            let derivedInitialCustomRepoUrls = [];
+            if (childAgentData.usedCustomRepoUrls && Array.isArray(childAgentData.usedCustomRepoUrls)) {
+                derivedInitialCustomRepoUrls = childAgentData.usedCustomRepoUrls;
+            } else if (childAgentData.tools && Array.isArray(childAgentData.tools)) {
+                derivedInitialCustomRepoUrls = (initialEnableCodeExec ? [] : (childAgentData.tools || []))
+                    .filter(st => st.type === 'custom_repo' && st.sourceRepoUrl)
+                    .map(st => st.sourceRepoUrl);
+            }
+            const finalInitialCustomRepos = initialEnableCodeExec ? [] : derivedInitialCustomRepoUrls;
+            setUsedCustomRepoUrls(Array.from(new Set(finalInitialCustomRepos)));
+
+        } else { // Creating a new child from scratch
             setName('');
             setDescription('');
-            setCurrentChildAgentType(AGENT_TYPES[0]); // New children from this dialog default to "Agent" type
+            setCurrentChildAgentType(AGENT_TYPES[0]);
             setModel(GEMINI_MODELS[0]);
             setInstruction('');
             setSelectedTools([]);
             setEnableCodeExecution(false);
             setOutputKey('');
+            setUsedCustomRepoUrls([]); // Reset for new child
         }
         setFormError('');
         setNameError('');
@@ -112,7 +139,6 @@ const ChildAgentFormDialog = ({
             return;
         }
 
-        // Instruction is key for LlmAgent type children ("Agent" or "LoopAgent")
         if ((currentChildAgentType === 'Agent' || currentChildAgentType === 'LoopAgent') && !instruction.trim()) {
             setFormError('Child agent instruction is required for this agent type.');
             return;
@@ -122,11 +148,12 @@ const ChildAgentFormDialog = ({
             id: childAgentData?.id || uuidv4(),
             name,
             description,
-            agentType: currentChildAgentType, // Ensure agentType is explicitly included
+            agentType: currentChildAgentType,
             model,
             instruction,
             tools: enableCodeExecution ? [] : selectedTools,
             enableCodeExecution,
+            usedCustomRepoUrls: enableCodeExecution ? [] : usedCustomRepoUrls, // Include usedCustomRepoUrls
         };
 
         const trimmedOutputKey = outputKey.trim();
@@ -134,22 +161,11 @@ const ChildAgentFormDialog = ({
             childDataToSave.outputKey = trimmedOutputKey;
         }
 
-        // If the child being edited/created is itself an orchestrator,
-        // it would have its own childAgents or maxLoops. Preserve them if editing such a type.
-        // This dialog doesn't allow *modifying* these nested structures, but preserves them if they came from childAgentData.
         if (currentChildAgentType === 'SequentialAgent' || currentChildAgentType === 'ParallelAgent') {
             childDataToSave.childAgents = childAgentData?.childAgents || [];
         }
         if (currentChildAgentType === 'LoopAgent') {
-            // maxLoops for LoopAgent should be handled by the parent form (AgentForm) if it's a root LoopAgent.
-            // If this ChildAgentDialog is *itself* editing a LoopAgent (which is a child of another orchestrator),
-            // then this dialog *should* have a maxLoops field. For now, we assume LoopAgent children
-            // are primarily configured through their LlmAgent-like properties here.
-            // ADK LoopAgent takes `agent` (LlmAgent) and `max_loops` for its constructor.
-            // The LlmAgent part is configured here. `max_loops` would need a field if this dialog was
-            // for configuring the loop itself.
-            // Let's assume for simplicity `maxLoops` is taken from `childAgentData` if editing a LoopAgent.
-            childDataToSave.maxLoops = childAgentData?.maxLoops || 3; // Default if editing and not set
+            childDataToSave.maxLoops = childAgentData?.maxLoops || 3;
         }
 
         onSave(childDataToSave);
@@ -157,8 +173,6 @@ const ChildAgentFormDialog = ({
     };
 
     const codeExecutionDisabledByToolSelection = selectedTools.length > 0;
-
-    // Show LlmAgent/LoopAgent specific fields if the type is 'Agent' or 'LoopAgent'
     const showLlmFields = currentChildAgentType === 'Agent' || currentChildAgentType === 'LoopAgent';
 
     return (
@@ -193,7 +207,6 @@ const ChildAgentFormDialog = ({
                         />
                     </Grid>
 
-                    {/* Conditionally render LlmAgent specific fields */}
                     {showLlmFields && (
                         <>
                             <Grid item xs={12} sm={6}>
@@ -254,6 +267,7 @@ const ChildAgentFormDialog = ({
                                     loadingGofannon={loadingGofannon}
                                     gofannonError={gofannonError}
                                     isCodeExecutionMode={enableCodeExecution}
+                                    onUsedCustomRepoUrlsChange={handleUsedCustomRepoUrlsChange} // Pass the new handler
                                 />
                             </Grid>
                         </>
@@ -266,10 +280,6 @@ const ChildAgentFormDialog = ({
                             </Typography>
                         </Grid>
                     )}
-                    {/* Add Max Loops field if agent type is LoopAgent (and being edited here) */}
-                    {/* This part is tricky because LoopAgent's primary config is the agent it loops */}
-                    {/* If this dialog IS editing a LoopAgent, it's configuring the *inner* agent primarily. */}
-
 
                     {formError && !nameError && <Grid item xs={12}><FormHelperText error>{formError}</FormHelperText></Grid>}
                 </Grid>
@@ -289,4 +299,4 @@ const ChildAgentFormDialog = ({
     );
 };
 
-export default ChildAgentFormDialog;
+export default ChildAgentFormDialog;  

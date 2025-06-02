@@ -1,4 +1,4 @@
-# functions/common/adk_helpers.py  
+# functions/common/adk_helpers.py
 import re
 import os
 import importlib
@@ -25,7 +25,6 @@ def generate_vertex_deployment_display_name(agent_config_name: str, agent_doc_id
 
 
 def instantiate_tool(tool_config):
-    # (No changes from your provided code, assuming it handles Gofannon/ADK/Langchain correctly)
     logger.info(f"Attempting to instantiate tool: {tool_config.get('id', 'N/A')}")
     if not isinstance(tool_config, dict):
         raise ValueError(f"Tool configuration must be a dictionary, got {type(tool_config)}")
@@ -42,17 +41,25 @@ def instantiate_tool(tool_config):
                 logger.info(f"Instantiating tool '{tool_config.get('id', class_name)}' with specific configuration keys: {list(instance_specific_kwargs.keys())}")
             else:
                 logger.info(f"Instantiating tool '{tool_config.get('id', class_name)}' with no specific instance configuration.")
+
             instance = ToolClass(**instance_specific_kwargs)
+
             if hasattr(instance, 'export_to_adk') and callable(instance.export_to_adk):
                 adk_tool_spec = instance.export_to_adk()
-                logger.info(f"Successfully instantiated and exported Gofannon tool '{tool_config.get('id', class_name)}' to ADK spec.")
+                # Changed log message to be more generic
+                tool_source_type = "Gofannon-compatible tool"
+                logger.info(f"Successfully instantiated and exported {tool_source_type} '{tool_config.get('id', class_name)}' to ADK spec.")
                 return adk_tool_spec
             else:
-                logger.info(f"Successfully instantiated tool '{tool_config.get('id', class_name)}' (assumed ADK compatible or Langchain tool).")
+                logger.info(f"Successfully instantiated tool '{tool_config.get('id', class_name)}' (assumed ADK native or directly compatible, e.g., Langchain tool).")
                 return instance
         except Exception as e:
             tool_id_for_log = tool_config.get('id', class_name or 'N/A')
-            logger.error(f"Error instantiating tool '{tool_id_for_log}': {e}\n{traceback.format_exc()}")
+            # Enhanced error logging for import issues
+            if isinstance(e, (ImportError, ModuleNotFoundError)):
+                logger.error(f"Error instantiating tool '{tool_id_for_log}': Could not import module '{module_path}'. Ensure this module is available in the Cloud Function's Python environment. Error: {e}\n{traceback.format_exc()}")
+            else:
+                logger.error(f"Error instantiating tool '{tool_id_for_log}': {e}\n{traceback.format_exc()}")
             raise ValueError(f"Error instantiating tool {tool_id_for_log}: {e}")
     else:
         raise ValueError(f"Unsupported or incomplete tool configuration for tool ID {tool_config.get('id', 'N/A')}. Missing module_path or class_name.")
@@ -241,4 +248,4 @@ __all__ = [
     'sanitize_adk_agent_name',
     '_prepare_agent_kwargs_from_config',
     'instantiate_adk_agent_from_config'
-]  
+]
