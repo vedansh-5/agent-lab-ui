@@ -1,17 +1,55 @@
 // src/components/agents/RunHistoryItem.js
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     Accordion, AccordionSummary, AccordionDetails, Box, Typography, Paper, Chip,
-    // Button, // <-- Removed Button
     Alert, AlertTitle
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PageviewIcon from '@mui/icons-material/Pageview';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import Inventory2Icon from '@mui/icons-material/Inventory2'; // For artifacts
 
 const RunHistoryItem = ({ run, index, onSelectRun }) => {
+    const [artifactSummary, setArtifactSummary] = useState('');
+
+    useEffect(() => {
+        if (run.outputEventsRaw) {
+            try {
+                const events = JSON.parse(run.outputEventsRaw);
+                const updates = {};
+                if (Array.isArray(events)) {
+                    events.forEach(event => {
+                        if (event && event.actions && event.actions.artifact_delta) {
+                            for (const [filename, versionInfo] of Object.entries(event.actions.artifact_delta)) {
+                                let versionDisplay = versionInfo;
+                                if (typeof versionInfo === 'object' && versionInfo !== null && 'version' in versionInfo) {
+                                    versionDisplay = versionInfo.version;
+                                } else if (typeof versionInfo === 'object' && versionInfo !== null) {
+                                    versionDisplay = JSON.stringify(versionInfo);
+                                }
+                                updates[filename] = versionDisplay;
+                            }
+                        }
+                    });
+                }
+                if (Object.keys(updates).length > 0) {
+                    const summaryString = Object.entries(updates)
+                        .map(([file, ver]) => `${file} (v${ver})`)
+                        .join(', ');
+                    setArtifactSummary(summaryString);
+                } else {
+                    setArtifactSummary('');
+                }
+            } catch (e) {
+                console.error("Error parsing events for artifact summary:", e);
+                setArtifactSummary('');
+            }
+        }
+    }, [run.outputEventsRaw]);
+
+
     const handleViewInRunner = (event) => {
-        event.stopPropagation();
+        event.stopPropagation(); // Prevent Accordion toggle if not desired
         if (onSelectRun) {
             onSelectRun(run);
         }
@@ -39,38 +77,22 @@ const RunHistoryItem = ({ run, index, onSelectRun }) => {
                         {run.timestamp?.toDate ? new Date(run.timestamp.toDate()).toLocaleString() : 'N/A'}
                     </Typography>
                 </Box>
-                {/* MODIFIED "View" Button to be a styled Box/Typography */}
                 <Box
                     onClick={handleViewInRunner}
                     sx={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        cursor: 'pointer',
-                        color: 'primary.main',
-                        border: '1px solid',
-                        borderColor: 'primary.main',
-                        borderRadius: 1,
-                        px: 1.5,
-                        py: 0.5,
-                        ml: 1,
-                        flexShrink: 0,
-                        fontSize: '0.8125rem', // MUI small button font size
-                        '&:hover': {
-                            bgcolor: 'primary.action.hover', // Use theme's hover color
-                            // Or a more specific one: alpha(theme.palette.primary.main, theme.palette.action.hoverOpacity)
-                        }
+                        display: 'inline-flex', alignItems: 'center', cursor: 'pointer', color: 'primary.main',
+                        border: '1px solid', borderColor: 'primary.main', borderRadius: 1,
+                        px: 1.5, py: 0.5, ml: 1, flexShrink: 0, fontSize: '0.8125rem',
+                        '&:hover': { bgcolor: 'primary.action.hover' }
                     }}
-                    role="button" // Add role for accessibility
-                    tabIndex={0} // Make it focusable
-                    onKeyPress={(e) => { if (e.key === 'Enter' || e.key === ' ') handleViewInRunner(e); }} // Keyboard accessible
+                    role="button" tabIndex={0}
+                    onKeyPress={(e) => { if (e.key === 'Enter' || e.key === ' ') handleViewInRunner(e); }}
                 >
                     <PageviewIcon sx={{ mr: 0.5, fontSize: '1.125rem' }} />
                     <Typography variant="button" sx={{ lineHeight: 'inherit', fontSize: 'inherit' }}>View</Typography>
                 </Box>
-                {/* END MODIFIED "View" Button */}
             </AccordionSummary>
             <AccordionDetails sx={{ bgcolor: 'action.hover' }}>
-                {/* ... rest of the AccordionDetails content ... */}
                 <Typography variant="caption" display="block" gutterBottom>
                     Run ID: {run.id}
                     {run.adkSessionId && <Chip label={`Session: ...${run.adkSessionId.slice(-6)}`} size="small" sx={{ml:1}}/>}
@@ -88,36 +110,30 @@ const RunHistoryItem = ({ run, index, onSelectRun }) => {
                     </Paper>
                 </Box>
 
+                {/* Display Artifact Summary */}
+                {artifactSummary && (
+                    <Box mt={1} mb={2}>
+                        <Typography variant="overline" display="flex" alignItems="center" color="text.secondary">
+                            <Inventory2Icon fontSize="inherit" sx={{mr:0.5, verticalAlign: 'middle'}} />Artifacts Updated:
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ wordBreak: 'break-all', ml:1 }}>
+                            {artifactSummary}
+                        </Typography>
+                    </Box>
+                )}
+
                 {run.queryErrorDetails && run.queryErrorDetails.length > 0 && (
                     <Box mt={1} mb={2}>
-                        <Alert
-                            severity="warning"
-                            sx={{ fontSize: '0.8rem', '& .MuiAlert-icon': {fontSize: '1.1rem', mr:0.5} }}
-                            iconMapping={{ warning: <ErrorOutlineIcon fontSize="inherit" /> }}
-                        >
-                            <AlertTitle sx={{ fontSize: '0.9rem', fontWeight: 'bold', mb:0.5 }}>Diagnostics During Run:</AlertTitle>
-                            <Box component="ul" sx={{ margin: 0, paddingLeft: '20px', listStyleType: 'disc', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight:'200px', overflowY:'auto' }}>
-                                {run.queryErrorDetails.map((err, i) => (
-                                    <Typography component="li" variant="caption" key={i} sx={{display:'list-item'}}>{typeof err === 'object' ? JSON.stringify(err) : err}</Typography>
-                                ))}
-                            </Box>
+                        <Alert /* ... existing error alert props ... */ >
+                            {/* ... existing error alert content ... */}
                         </Alert>
                     </Box>
                 )}
 
                 {run.outputEventsRaw && (
                     <Box>
-                        <Typography variant="overline" display="block" color="text.secondary">Raw Events ({JSON.parse(run.outputEventsRaw)?.length || 0}):</Typography>
-                        <Paper component="pre" variant="outlined" sx={{
-                            p: 1.5,
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-all',
-                            maxHeight: '200px',
-                            overflowY: 'auto',
-                            fontSize: '0.75rem',
-                            bgcolor: 'grey.100',
-                            color: 'common.black'
-                        }}>
+                        <Typography /* ... existing raw events props ... */ >Raw Events ({JSON.parse(run.outputEventsRaw)?.length || 0}):</Typography>
+                        <Paper /* ... existing raw events paper props ... */ >
                             {JSON.stringify(JSON.parse(run.outputEventsRaw), null, 2)}
                         </Paper>
                     </Box>

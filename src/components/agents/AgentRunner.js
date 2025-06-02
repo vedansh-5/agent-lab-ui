@@ -19,6 +19,34 @@ import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import DeveloperModeIcon from '@mui/icons-material/DeveloperMode';
 import LiveTvIcon from '@mui/icons-material/LiveTv';
+import Inventory2Icon from '@mui/icons-material/Inventory2'; // For artifacts
+
+// Helper function to extract artifact updates from a list of events
+const extractArtifactUpdates = (events) => {
+    const updates = {};
+    if (!events || !Array.isArray(events)) return null;
+
+    events.forEach(event => {
+        if (event && event.actions && event.actions.artifact_delta) {
+            for (const [filename, versionInfo] of Object.entries(event.actions.artifact_delta)) {
+                // versionInfo could be just the version number, or a Part object in some ADK versions/setups
+                // For display, we'll try to get a simple version number if possible
+                let versionDisplay = versionInfo;
+                if (typeof versionInfo === 'object' && versionInfo !== null && 'version' in versionInfo) { // Check specific structure if known
+                    versionDisplay = versionInfo.version;
+                } else if (typeof versionInfo === 'number') {
+                    versionDisplay = versionInfo;
+                } else if (typeof versionInfo === 'object' && versionInfo !== null) {
+                    // If it's an object but not {version: X}, stringify for now
+                    versionDisplay = JSON.stringify(versionInfo);
+                }
+                updates[filename] = versionDisplay;
+            }
+        }
+    });
+    return Object.keys(updates).length > 0 ? updates : null;
+};
+
 
 const AgentRunner = ({
                          agentResourceName,
@@ -31,7 +59,7 @@ const AgentRunner = ({
     const [message, setMessage] = useState('');
     const [conversation, setConversation] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState(null); // For general errors from the callable
+    const [error, setError] = useState(null);
     const [currentSessionId, setCurrentSessionId] = useState(null);
     const conversationEndRef = useRef(null);
 
@@ -55,8 +83,10 @@ const AgentRunner = ({
                 timestamp: historicalRunData.timestamp?.toDate ? historicalRunData.timestamp.toDate() : new Date(),
             });
             let agentEvents = [];
+            let artifactUpdatesForHistorical = null;
             try {
                 agentEvents = historicalRunData.outputEventsRaw ? JSON.parse(historicalRunData.outputEventsRaw) : [];
+                artifactUpdatesForHistorical = extractArtifactUpdates(agentEvents);
             } catch (parseError) {
                 console.error("Error parsing historical run events:", parseError);
                 agentEvents = [{type: "error", content: "Error parsing raw events."}];
@@ -66,7 +96,8 @@ const AgentRunner = ({
                 text: historicalRunData.finalResponseText || "Agent did not provide a text response.",
                 events: agentEvents,
                 timestamp: historicalRunData.timestamp?.toDate ? new Date(historicalRunData.timestamp.toDate().getTime() + 1000) : new Date(),
-                queryErrorDetails: historicalRunData.queryErrorDetails || null // Load historical errors
+                queryErrorDetails: historicalRunData.queryErrorDetails || null,
+                artifactUpdates: artifactUpdatesForHistorical // Add artifact updates here
             });
             setConversation(historicalConversation);
             setMessage('');
@@ -98,13 +129,16 @@ const AgentRunner = ({
 
         try {
             const result = await queryAgent(agentResourceName, currentInput, adkUserId, currentSessionId, agentFirestoreId);
+            const agentEvents = result.events || [];
+            const artifactUpdates = extractArtifactUpdates(agentEvents); // Extract artifact updates
 
             const agentResponse = {
                 type: 'agent',
                 text: result.responseText || "Agent responded.",
-                events: result.events || [],
+                events: agentEvents,
                 timestamp: new Date(),
-                queryErrorDetails: result.queryErrorDetails || null
+                queryErrorDetails: result.queryErrorDetails || null,
+                artifactUpdates: artifactUpdates // Store extracted updates
             };
 
             if (result.success) {
@@ -112,20 +146,16 @@ const AgentRunner = ({
                 if (result.adkSessionId) {
                     setCurrentSessionId(result.adkSessionId);
                 }
-                if (agentResponse.queryErrorDetails && agentResponse.queryErrorDetails.length > 0) {
-                    // Error is displayed inline, general error state not strictly needed for *these* errors
-                    // setError(`Agent processing completed with issues. See details below.`);
-                }
             } else {
                 const errorMessage = result.message || "Agent query failed. No specific error message.";
-                setError(errorMessage); // Set general error for callable failure
-                agentResponse.type = 'error'; // Mark for styling
-                agentResponse.text = `Query Failed: ${errorMessage}`; // Overwrite text for error bubble
+                setError(errorMessage);
+                agentResponse.type = 'error';
+                agentResponse.text = `Query Failed: ${errorMessage}`;
                 setConversation(prev => [...prev, agentResponse]);
             }
         } catch (err) {
             const errorMessage = err.message || "An error occurred while querying the agent.";
-            setError(errorMessage); // Set general error
+            setError(errorMessage);
             const errorResponse = { type: 'error', text: errorMessage, timestamp: new Date() };
             setConversation(prev => [...prev, errorResponse]);
         } finally {
@@ -257,16 +287,31 @@ const AgentRunner = ({
                                         </Typography>
                                     }
                                 />
+                                {/* Display Artifact Updates */}
+                                {entry.type === 'agent' && entry.artifactUpdates && (
+                                    <Box mt={1} sx={{ borderTop: '1px dashed', borderColor: 'divider', pt: 1, opacity: 0.8}}>
+                                        <Typography variant="caption" display="flex" alignItems="center" sx={{fontWeight: 'medium', color: entry.queryErrorDetails ? 'warning.contrastText' : 'text.secondary' }}>
+                                            <Inventory2Icon fontSize="inherit" sx={{mr:0.5, verticalAlign: 'middle'}}/> Artifacts Updated:
+                                        </Typography>
+                                        <Box component="ul" sx={{pl: 2, m:0, listStyleType:'none'}}>
+                                            {Object.entries(entry.artifactUpdates).map(([filename, version]) => (
+                                                <Typography component="li" key={filename} variant="caption" display="block" sx={{fontSize: '0.7rem', color: entry.queryErrorDetails ? 'warning.contrastText' : 'text.secondary'}}>
+                                                    {filename} (v{version})
+                                                </Typography>
+                                            ))}
+                                        </Box>
+                                    </Box>
+                                )}
                                 {entry.type === 'agent' && entry.queryErrorDetails && entry.queryErrorDetails.length > 0 && (
                                     <Alert
                                         severity="warning"
                                         sx={{
                                             mt: 1,
                                             fontSize: '0.8rem',
-                                            bgcolor: 'transparent',
-                                            color: 'inherit',
+                                            bgcolor: 'transparent', // So it inherits the bubble color
+                                            color: 'inherit', // Inherit text color from Paper
                                             '& .MuiAlert-icon': { color: 'inherit', fontSize: '1.1rem', mr:0.5, pt:0.2 },
-                                            border: (theme) => `1px solid ${theme.palette.warning.dark}`,
+                                            border: (theme) => `1px solid ${theme.palette.warning.dark}`, // Or another contrasting border
                                             p:1,
                                         }}
                                         iconMapping={{
@@ -295,7 +340,7 @@ const AgentRunner = ({
                                                 position: 'absolute',
                                                 bottom: 2,
                                                 right: 2,
-                                                color: (theme) => theme.palette.action.active,
+                                                color: (theme) => theme.palette.action.active, // Use theme for icon color
                                                 '&:hover': { bgcolor: (theme) => theme.palette.action.hover }
                                             }}
                                             aria-label="view agent reasoning"
@@ -340,7 +385,7 @@ const AgentRunner = ({
                         color="primary"
                         disabled={isLoading || isHistoricalView || !message.trim()}
                         endIcon={<SendIcon />}
-                        sx={{ height: '100%', alignSelf: 'flex-end' }}
+                        sx={{ height: '100%', alignSelf: 'flex-end' }} // Changed from alignSelf:'stretch' to flex-end to match TextField
                     >
                         Send
                     </Button>
