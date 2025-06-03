@@ -3,12 +3,37 @@ import React from 'react';
 import { Typography, Paper, List, ListItem, ListItemText, Box, Chip } from '@mui/material';
 import LoopIcon from '@mui/icons-material/Loop';
 import { getPlatformById } from '../../constants/platformConstants';
+import { MODEL_PROVIDERS } from '../../constants/agentConstants';
+
 
 const AgentDetailsDisplay = ({ agent }) => {
     if (!agent) return null;
 
     const showParentConfigDisplay = agent.agentType === 'Agent' || agent.agentType === 'LoopAgent';
     const platformInfo = agent.platform ? getPlatformById(agent.platform) : null;
+
+    const getModelProviderName = (providerId) => {
+        const provider = MODEL_PROVIDERS.find(p => p.id === providerId);
+        return provider ? provider.name : 'Unknown Provider';
+    };
+
+    const modelDisplay = () => {
+        const providerName = getModelProviderName(agent.modelProvider);
+        if (agent.modelProvider === 'openai_compatible') {
+            let endpointDisplay = agent.apiBase ? new URL(agent.apiBase).hostname : 'N/A';
+            if (agent.apiBase === agent.modelNameForEndpoint && agent.apiBase?.startsWith('http')) { // Heuristic for ollama/model format
+                endpointDisplay = agent.apiBase; // Show full if it's likely ollama/model
+            } else if (agent.apiBase && agent.modelNameForEndpoint && !agent.apiBase.endsWith(agent.modelNameForEndpoint)){
+                endpointDisplay = `${agent.apiBase} (model: ${agent.modelNameForEndpoint})`;
+            } else if (agent.modelNameForEndpoint) {
+                endpointDisplay = agent.modelNameForEndpoint;
+            }
+            return `${providerName}: ${endpointDisplay}`;
+        }
+        // Default to Google Gemini (original behavior or if provider is undefined)
+        return `${providerName}: ${agent.model || 'N/A'}`;
+    };
+
 
     return (
         <>
@@ -32,9 +57,11 @@ const AgentDetailsDisplay = ({ agent }) => {
                     <Typography variant="subtitle1" fontWeight="medium">
                         {agent.agentType === 'LoopAgent' ? "Looped Agent Model:" : "Model:"}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary" paragraph>{agent.model}</Typography>
+                    <Typography variant="body2" color="text.secondary" paragraph sx={{wordBreak: 'break-all'}}>
+                        {modelDisplay()} {/* Use new modelDisplay function */}
+                    </Typography>
 
-                    {agent.outputKey && ( // Display outputKey for Agent and LoopAgent's main config
+                    {agent.outputKey && (
                         <>
                             <Typography variant="subtitle1" fontWeight="medium">
                                 {agent.agentType === 'LoopAgent' ? "Looped Agent Output Key:" : "Output Key:"}
