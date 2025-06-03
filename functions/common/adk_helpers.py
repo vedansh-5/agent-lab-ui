@@ -6,6 +6,101 @@ import traceback
 from .core import logger
 from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent # ADK Agent classes
 from google.adk.tools.agent_tool import AgentTool
+from google.adk.models.lite_llm import LiteLlm
+
+def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context_for_log: str = ""):
+    logger.info(f"Preparing kwargs for ADK agent '{adk_agent_name}' {context_for_log}. Original config name: '{agent_config.get('name', 'N/A')}'")
+
+    instantiated_tools = []
+    user_defined_tools_config = agent_config.get("tools", [])
+    for tc_idx, tc in enumerate(user_defined_tools_config):
+        try:
+            tool_instance = instantiate_tool(tc)
+            instantiated_tools.append(tool_instance)
+            logger.info(f"Successfully instantiated tool '{tc.get('id', f'index_{tc_idx}')}' for agent '{adk_agent_name}'.")
+        except ValueError as e:
+            logger.warn(f"Skipping tool for agent '{adk_agent_name}' due to error: {e} (Tool config: {tc.get('id', f'index_{tc_idx}')})")
+
+    final_tool_config_for_agent = None
+    enable_code_execution = agent_config.get("enableCodeExecution", False)
+
+    # --- Model Configuration ---
+    model_provider = agent_config.get("modelProvider", "google_gemini") # Default to Gemini
+
+    actual_model_for_adk = None
+
+    if model_provider == "openai_compatible":
+        model_name_for_endpoint = agent_config.get("modelNameForEndpoint")
+        api_base_url = agent_config.get("apiBase")
+        api_key_for_endpoint = agent_config.get("apiKey") # Can be None for local/unsecured
+
+        if not model_name_for_endpoint:
+            raise ValueError(f"Missing 'modelNameForEndpoint' for 'openai_compatible' provider in agent config '{agent_config.get('name', 'N/A')}'.")
+        if not api_base_url:
+            raise ValueError(f"Missing 'apiBase' for 'openai_compatible' provider in agent config '{agent_config.get('name', 'N/A')}'.")
+
+        logger.info(f"Configuring LiteLlm for agent '{adk_agent_name}' using endpoint model '{model_name_for_endpoint}' at base URL '{api_base_url}'. API key provided: {'Yes' if api_key_for_endpoint else 'No'}")
+        actual_model_for_adk = LiteLlm(
+            model=model_name_for_endpoint, # Model name as known by the endpoint
+            api_base=api_base_url,
+            api_key=api_key_for_endpoint # LiteLLM handles if this is None
+        )
+    elif model_provider == "google_gemini":
+        # Use the 'model' field for Gemini, which was the original behavior
+        gemini_model_id = agent_config.get("model")
+        if not gemini_model_id:
+            default_gemini = "gemini-1.5-flash-001" # Or your preferred default from constants
+            logger.warn(f"No 'model' (Gemini model ID) provided for 'google_gemini' provider in agent config '{agent_config.get('name', 'N/A')}'. Defaulting to '{default_gemini}'.")
+            gemini_model_id = default_gemini
+        actual_model_for_adk = gemini_model_id
+        logger.info(f"Configuring Google Gemini model '{actual_model_for_adk}' for agent '{adk_agent_name}'.")
+    else:
+        raise ValueError(f"Unsupported modelProvider: '{model_provider}' for agent config '{agent_config.get('name', 'N/A')}'.")
+
+
+        # --- Code Execution Handling (remains mostly the same, uses the determined model) ---
+    # Note: Ensure the model determined above (actual_model_for_adk, if it's a string for Gemini)
+    # is compatible with code execution if enable_code_execution is true.
+    # LiteLLM's compatibility with ADK's direct code_execution_config might vary or require specific model capabilities.
+    # For now, we assume if enable_code_execution is true, the selected model (Gemini or via LiteLLM) supports it.
+    # A more robust check might be needed here in the future if LiteLLM models behave differently
+    # with ADK's code_execution_config.
+
+    current_agent_model_for_code_exec_sub_agent = "gemini-1.5-flash-001" # Default for sub-agent
+    if model_provider == "google_gemini" and actual_model_for_adk:
+        current_agent_model_for_code_exec_sub_agent = actual_model_for_adk
+    elif model_provider == "openai_compatible":
+        # For LiteLlm, the sub-agent for code execution might still need to be Gemini,
+        # or the LiteLlm instance itself could be passed if ADK supports it directly for sub-agents.
+        # This part might need refinement based on ADK's AgentTool capabilities with LiteLlm instances.
+        # For safety, defaulting to a known Gemini model for the sub-agent.
+        # Alternatively, if the LiteLlm instance can be an "agent" for AgentTool:
+        # current_agent_model_for_code_exec_sub_agent = actual_model_for_adk
+        pass # Keep default Gemini for code exec sub-agent for now with LiteLLM
+
+    if enable_code_execution:
+        if not instantiated_tools:
+            final_tool_config_for_agent = {"code_execution_config": {"enabled": True}}
+            logger.info(f"Enabling direct code execution for agent '{adk_agent_name}' (no other tools).")
+        else:
+            logger.info(f"Agent '{adk_agent_name}' requires code execution AND other tools. Wrapping code execution in an AgentTool.")
+            code_executor_sub_agent = _create_code_executor_agent(base_name=adk_agent_name, model=current_agent_model_for_code_exec_sub_agent)
+            code_execution_agent_tool = AgentTool(agent=code_executor_sub_agent)
+            instantiated_tools.append(code_execution_agent_tool)
+            logger.info(f"Added AgentTool for code execution to tools list for '{adk_agent_name}'. Main agent tool_config remains None.")
+    else:
+        logger.info(f"Code execution is DISABLED for agent '{adk_agent_name}'.")
+
+    agent_kwargs = {
+        "name": adk_agent_name,
+        "description": agent_config.get("description"),
+        "model": actual_model_for_adk, # Will be string (Gemini) or LiteLlm instance
+        "instruction": agent_config.get("instruction"),
+        "tools": instantiated_tools,
+        "tool_config": final_tool_config_for_agent,
+        "output_key": agent_config.get("outputKey"),
+    }
+    return {k: v for k, v in agent_kwargs.items() if v is not None}
 
 def generate_vertex_deployment_display_name(agent_config_name: str, agent_doc_id: str) -> str:
     # (No changes from your provided code, assuming it's correct)

@@ -4,7 +4,12 @@ import ToolSelector from '../tools/ToolSelector';
 import ChildAgentFormDialog from './ChildAgentFormDialog';
 import ExistingAgentSelectorDialog from './ExistingAgentSelectorDialog';
 import { fetchGofannonTools } from '../../services/agentService';
-import { AGENT_TYPES, GEMINI_MODELS } from '../../constants/agentConstants';
+import {
+    AGENT_TYPES,
+    MODEL_PROVIDERS,
+    GOOGLE_GEMINI_MODELS_LIST,
+    DEFAULT_GEMINI_MODEL
+} from '../../constants/agentConstants';
 import { v4 as uuidv4 } from 'uuid';
 import {
     TextField, Button, Select, MenuItem, FormControl, InputLabel,
@@ -44,13 +49,19 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [name, setName] = useState(initialData.name || '');
     const [description, setDescription] = useState(initialData.description || '');
     const [agentType, setAgentType] = useState(initialData.agentType || AGENT_TYPES[0]);
-    const [model, setModel] = useState(initialData.model || GEMINI_MODELS[0]);
+
+    // Model Configuration State
+    const [modelProvider, setModelProvider] = useState(initialData.modelProvider || MODEL_PROVIDERS[0].id);
+    const [model, setModel] = useState(initialData.model || DEFAULT_GEMINI_MODEL); // For Gemini
+    const [modelNameForEndpoint, setModelNameForEndpoint] = useState(initialData.modelNameForEndpoint || '');
+    const [apiBase, setApiBase] = useState(initialData.apiBase || '');
+    const [apiKey, setApiKey] = useState(initialData.apiKey || ''); // API Key for OpenAI-compatible
+
     const [instruction, setInstruction] = useState(initialData.instruction || '');
     const [selectedTools, setSelectedTools] = useState(initialData.tools || []);
     const [maxLoops, setMaxLoops] = useState(initialData.maxLoops || 3);
     const [enableCodeExecution, setEnableCodeExecution] = useState(initialData.enableCodeExecution || false);
     const [outputKey, setOutputKey] = useState(initialData.outputKey || '');
-    // Corrected initialization of usedCustomRepoUrls
     const [usedCustomRepoUrls, setUsedCustomRepoUrls] = useState(
         initialData.usedCustomRepoUrls ||
         (initialData.tools?.filter(t => t.type === 'custom_repo' && t.sourceRepoUrl).map(t => t.sourceRepoUrl) || [])
@@ -72,7 +83,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         setEnableCodeExecution(isChecked);
         if (isChecked) {
             setSelectedTools([]);
-            setUsedCustomRepoUrls([]); // Clear custom repos if code execution is on
+            setUsedCustomRepoUrls([]);
         }
     };
 
@@ -120,7 +131,23 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         setName(initialData.name || '');
         setDescription(initialData.description || '');
         setAgentType(initialData.agentType || AGENT_TYPES[0]);
-        setModel(initialData.model || GEMINI_MODELS[0]);
+
+        const initialProvider = initialData.modelProvider || MODEL_PROVIDERS[0].id;
+        setModelProvider(initialProvider);
+
+        if (initialProvider === 'google_gemini') {
+            setModel(initialData.model || DEFAULT_GEMINI_MODEL);
+            setModelNameForEndpoint(initialData.modelNameForEndpoint || ''); // Keep if switching back
+            setApiBase(initialData.apiBase || '');
+            setApiKey(initialData.apiKey || '');
+        } else if (initialProvider === 'openai_compatible') {
+            setModelNameForEndpoint(initialData.modelNameForEndpoint || '');
+            setApiBase(initialData.apiBase || '');
+            setApiKey(initialData.apiKey || '');
+            setModel(initialData.model || DEFAULT_GEMINI_MODEL); // Keep if switching back
+        }
+
+
         setInstruction(initialData.instruction || '');
         const initialEnableCodeExec = initialData.enableCodeExecution || false;
         setEnableCodeExecution(initialEnableCodeExec);
@@ -128,12 +155,10 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         const initialSelectedTools = initialEnableCodeExec ? [] : (initialData.tools || []);
         setSelectedTools(initialSelectedTools);
 
-        // Corrected logic for initializing usedCustomRepoUrls
         let derivedInitialCustomRepoUrls = [];
         if (initialData.usedCustomRepoUrls && Array.isArray(initialData.usedCustomRepoUrls)) {
             derivedInitialCustomRepoUrls = initialData.usedCustomRepoUrls;
         } else if (initialData.tools && Array.isArray(initialData.tools)) {
-            // Infer from tools if usedCustomRepoUrls is not directly provided
             derivedInitialCustomRepoUrls = initialSelectedTools
                 .filter(st => st.type === 'custom_repo' && st.sourceRepoUrl)
                 .map(st => st.sourceRepoUrl);
@@ -174,11 +199,33 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
 
         const agentDataToSubmit = {
             name, description, agentType,
-            model, instruction,
+            modelProvider, // Add provider
+            instruction,
             tools: enableCodeExecution ? [] : selectedTools,
             enableCodeExecution,
             usedCustomRepoUrls: enableCodeExecution ? [] : usedCustomRepoUrls,
         };
+
+        if (modelProvider === 'google_gemini') {
+            if (!model) {
+                setFormError('Gemini Model is required when Google Gemini provider is selected.');
+                return;
+            }
+            agentDataToSubmit.model = model;
+        } else if (modelProvider === 'openai_compatible') {
+            if (!modelNameForEndpoint) {
+                setFormError('Model Name for Endpoint is required for OpenAI-Compatible provider.');
+                return;
+            }
+            if (!apiBase) {
+                setFormError('API Base URL is required for OpenAI-Compatible provider.');
+                return;
+            }
+            agentDataToSubmit.modelNameForEndpoint = modelNameForEndpoint;
+            agentDataToSubmit.apiBase = apiBase;
+            agentDataToSubmit.apiKey = apiKey; // API Key is optional
+        }
+
 
         const trimmedOutputKey = outputKey.trim();
         if (trimmedOutputKey) {
@@ -238,7 +285,10 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         const newChildAgent = {
             ...selectedAgentFullConfig,
             id: uuidv4(),
+            // Ensure agentType is always set, default if missing
             agentType: selectedAgentFullConfig.agentType || AGENT_TYPES[0],
+            // Ensure modelProvider is set, default if missing
+            modelProvider: selectedAgentFullConfig.modelProvider || MODEL_PROVIDERS[0].id,
         };
         setChildAgents(prev => [...prev, newChildAgent]);
         setIsExistingAgentSelectorOpen(false);
@@ -284,7 +334,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                     <Grid item xs={12}>
                         <TextField label="Description" id="description" value={description} onChange={(e) => setDescription(e.target.value)} multiline rows={3} fullWidth variant="outlined" />
                     </Grid>
-                    <Grid item xs={12} sm={showParentConfig ? 4 : 6}>
+                    <Grid item xs={12} sm={showParentConfig ? 6 : 12}> {/* Adjusted sm for provider */}
                         <FormControl fullWidth variant="outlined">
                             <InputLabel id="agentType-label">Agent Type</InputLabel>
                             <Select labelId="agentType-label" id="agentType" value={agentType} onChange={(e) => setAgentType(e.target.value)} label="Agent Type">
@@ -293,21 +343,95 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                         </FormControl>
                     </Grid>
 
+                    {/* Model Provider Selection (conditionally shown for parent config) */}
+                    {showParentConfig && (
+                        <Grid item xs={12} sm={6}> {/* Adjusted sm for provider */}
+                            <FormControl fullWidth variant="outlined">
+                                <InputLabel id="modelProvider-label">Model Provider</InputLabel>
+                                <Select
+                                    labelId="modelProvider-label"
+                                    id="modelProvider"
+                                    value={modelProvider}
+                                    onChange={(e) => {
+                                        const newProvider = e.target.value;
+                                        setModelProvider(newProvider);
+                                        // Reset model fields when provider changes
+                                        if (newProvider === 'google_gemini') {
+                                            setModel(DEFAULT_GEMINI_MODEL);
+                                            // Optionally clear other provider fields or retain for quick switch back
+                                            // setModelNameForEndpoint(''); setApiBase(''); setApiKey('');
+                                        } else if (newProvider === 'openai_compatible') {
+                                            setModelNameForEndpoint(''); // Clear specific fields
+                                            setApiBase('');
+                                            setApiKey('');
+                                            // Optionally set Gemini model to a placeholder or retain for quick switch back
+                                            // setModel(DEFAULT_GEMINI_MODEL);
+                                        }
+                                    }}
+                                    label="Model Provider"
+                                >
+                                    {MODEL_PROVIDERS.map(provider => <MenuItem key={provider.id} value={provider.id}>{provider.name}</MenuItem>)}
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                    )}
+
+
                     {/* Parent Config Fields (Model, Output Key, Instruction, Code Exec, Tools) */}
+                    {showParentConfig && modelProvider === 'google_gemini' && (
+                        <Grid item xs={12}>
+                            <FormControl fullWidth variant="outlined">
+                                <InputLabel id="model-label">Gemini Model</InputLabel>
+                                <Select labelId="model-label" id="model" value={model} onChange={(e) => setModel(e.target.value)} label="Gemini Model">
+                                    {GOOGLE_GEMINI_MODELS_LIST.map(m => <MenuItem key={m} value={m}>{m}</MenuItem>)}
+                                </Select>
+                                <FormHelperText>
+                                    {agentType === 'LoopAgent' ? "Model for the looped agent." : "Model for this agent."} (Gemini 2 for built-in tools/executor)
+                                </FormHelperText>
+                            </FormControl>
+                        </Grid>
+                    )}
+                    {showParentConfig && modelProvider === 'openai_compatible' && (
+                        <>
+                            <Grid item xs={12} sm={6}>
+                                <TextField
+                                    label="Model Name (for Endpoint)"
+                                    id="modelNameForEndpoint"
+                                    value={modelNameForEndpoint}
+                                    onChange={(e) => setModelNameForEndpoint(e.target.value)}
+                                    fullWidth variant="outlined" required
+                                    helperText="Model ID your endpoint expects (e.g., 'gpt-4', 'custom/my-model')."
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField
+                                    label="API Base URL"
+                                    id="apiBase"
+                                    value={apiBase}
+                                    onChange={(e) => setApiBase(e.target.value)}
+                                    fullWidth variant="outlined" required
+                                    placeholder="e.g., https://api.example.com/v1"
+                                    helperText="Base URL of the OpenAI-compatible API."
+                                />
+                            </Grid>
+                            <Grid item xs={12}>
+                                <TextField
+                                    label="API Key (Optional)"
+                                    id="apiKey"
+                                    type="password"
+                                    value={apiKey}
+                                    onChange={(e) => setApiKey(e.target.value)}
+                                    fullWidth variant="outlined"
+                                    helperText="Your API key for the endpoint. Leave blank if not required (e.g., local server)."
+                                    autoComplete="new-password" // To prevent browser autofill sometimes
+                                />
+                            </Grid>
+                        </>
+                    )}
+
                     {showParentConfig && (
                         <>
-                            <Grid item xs={12} sm={4}>
-                                <FormControl fullWidth variant="outlined">
-                                    <InputLabel id="model-label">Model</InputLabel>
-                                    <Select labelId="model-label" id="model" value={model} onChange={(e) => setModel(e.target.value)} label="Model">
-                                        {GEMINI_MODELS.map(m => <MenuItem key={m} value={m}>{m}</MenuItem>)}
-                                    </Select>
-                                    <FormHelperText>
-                                        {agentType === 'LoopAgent' ? "Model for the looped agent." : "Model for this agent."} (Gemini 2 for built-in tools/executor)
-                                    </FormHelperText>
-                                </FormControl>
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
+                            <Grid item xs={12}>
                                 <TextField
                                     label="Output Key (Optional)"
                                     id="outputKey" value={outputKey} onChange={(e) => setOutputKey(e.target.value)}
@@ -338,7 +462,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                     label="Enable Built-in Code Execution"
                                 />
                                 <FormHelperText sx={{ml:3.5, mt:-0.5}}>
-                                    (For this agent or its looped child. Requires a Gemini 2 model. Cannot be used if other tools are selected.)
+                                    (Requires a compatible model. Cannot be used if other tools are selected.)
                                 </FormHelperText>
                             </Grid>
                             <Grid item xs={12}>
@@ -409,7 +533,8 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                                 <ListItemText
                                                     primary={`${index + 1}. ${child.name}`}
                                                     secondary={
-                                                        `Type: ${child.agentType || 'Agent'} | Model: ${child.model || 'N/A'} | ` +
+                                                        `Type: ${child.agentType || 'Agent'} | Provider: ${MODEL_PROVIDERS.find(p=>p.id === child.modelProvider)?.name || 'N/A'} | ` +
+                                                        (child.modelProvider === 'google_gemini' ? `Model: ${child.model || 'N/A'} | ` : `Endpoint Model: ${child.modelNameForEndpoint || 'N/A'} | `) +
                                                         `Tools: ${child.tools?.length || 0}${child.tools?.some(t => t.configuration) ? ' (some configured)' : ''} | ` +
                                                         `Code Exec: ${child.enableCodeExecution ? 'Yes' : 'No'} | OutputKey: ${child.outputKey || 'N/A'}`
                                                     }
