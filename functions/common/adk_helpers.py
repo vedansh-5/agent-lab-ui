@@ -79,7 +79,7 @@ def sanitize_adk_agent_name(name_str: str, prefix_if_needed: str = "agent_") -> 
         sanitized = f"{prefix_if_needed.strip('_')}_default_agent_name"
     sanitized = sanitized[:63] # ADK name length limit
     if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", sanitized):
-        logger.warning(f"Sanitized name '{sanitized}' from '{name_str}' is still not a valid Python identifier. Using a generic fallback.")
+        logger.warn(f"Sanitized name '{sanitized}' from '{name_str}' is still not a valid Python identifier. Using a generic fallback.")
         generic_name = f"{prefix_if_needed.strip('_')}_{os.urandom(4).hex()}"
         return generic_name[:63]
     return sanitized
@@ -109,7 +109,7 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
             instantiated_tools.append(tool_instance)
             logger.info(f"Successfully instantiated tool '{tc.get('id', f'index_{tc_idx}')}' for agent '{adk_agent_name}'.")
         except ValueError as e:
-            logger.warning(f"Skipping tool for agent '{adk_agent_name}' due to error: {e} (Tool config: {tc.get('id', f'index_{tc_idx}')})")
+            logger.warn(f"Skipping tool for agent '{adk_agent_name}' due to error: {e} (Tool config: {tc.get('id', f'index_{tc_idx}')})")
 
     final_tool_config_for_agent = None
     enable_code_execution = agent_config.get("enableCodeExecution", False)

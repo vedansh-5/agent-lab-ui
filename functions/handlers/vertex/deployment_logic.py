@@ -59,7 +59,9 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
 
         # --- Deployment to Vertex AI ---
     # Base requirements
-    requirements_list = ["google-cloud-aiplatform[adk,agent_engines]>=1.93.1", "gofannon"]
+    requirements_list = ["google-cloud-aiplatform[adk,agent_engines]>=1.93.1",
+                         "gofannon",
+                         ]
 
     # Add custom tool repositories if provided
     custom_repo_urls = agent_config_data.get("usedCustomRepoUrls", [])
@@ -68,63 +70,89 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
             if isinstance(repo_url_original, str) and repo_url_original.strip():
                 repo_url_raw = repo_url_original.strip()
 
-                if not (repo_url_raw.startswith("https://") or repo_url_raw.startswith("http://") or repo_url_raw.startswith("git+")):
-                    logger.warning(f"Skipping invalid custom repository URL (scheme): {repo_url_raw}")
+                if not (repo_url_raw.startswith("https://") or repo_url_raw.startswith("http://") or \
+                        repo_url_raw.startswith("git@") or repo_url_raw.startswith("git+")): # Allow common git URL starts
+                    logger.warning(f"Skipping custom repository URL with unrecognized scheme: {repo_url_raw}")
                     continue
 
                 base_url_for_pip = repo_url_raw
                 fragment_str = ""
                 if "#" in repo_url_raw:
+                    # Split base URL from fragment. base_url_for_pip will not have #
                     base_url_for_pip, fragment_str = repo_url_raw.split("#", 1)
 
-                if not base_url_for_pip.startswith("git+"):
+                    # Ensure 'git+' prefix for HTTP/HTTPS, or convert SSH to git+ssh
+                if base_url_for_pip.startswith("git@"): # e.g. git@github.com:user/repo.git@ref
+                    # Convert git@host:path@ref to git+ssh://git@host/path@ref
+                    # The @ref part needs to be preserved correctly after the path.
+                    path_with_potential_ref = base_url_for_pip.split(":", 1)[1] # user/repo.git@ref
+                    host_part = base_url_for_pip.split(":")[0] # git@github.com
+                    base_url_for_pip = f"git+ssh://{host_part}/{path_with_potential_ref}"
+                elif not base_url_for_pip.startswith("git+"):
                     base_url_for_pip = "git+" + base_url_for_pip
 
-                    # Check for specific ref like @commit, @branch, @tag in the base_url_for_pip
-                # A ref is part of the URL path before any #fragment
-                # e.g., git+https://server/path/repo@ref.git or git+https://server/path/repo.git@ref
-                has_specific_ref = "@" in base_url_for_pip.split("://", 1)[-1]
+                    # base_url_for_pip now is like:
+                # git+https://github.com/user/repo.git@mybranch
+                # git+ssh://git@github.com/user/repo.git@mybranch
+                # git+https://github.com/user/repo.git (no ref)
 
-                # Determine egg_name
+                # Determine user_specified_ref from the part of base_url_for_pip after the repo path
+                user_specified_ref = None
+                # Regex to capture repo path and optional ref (group1=repo_path, group2=ref)
+                # Works for URLs like git+[proto]://host/path/repo.git@ref or git+[proto]://host/path/repo@ref
+                match_repo_and_ref = re.match(r"^(.*\/[^@/]+(?:\.git)?)(?:@([^#]+))?$", base_url_for_pip)
+                repo_path_for_install = base_url_for_pip # Default to full URL if regex fails
+
+                if match_repo_and_ref:
+                    repo_path_for_install = match_repo_and_ref.group(1) # The URL part up to repo.git or repo name
+                    if match_repo_and_ref.group(2):
+                        user_specified_ref = match_repo_and_ref.group(2)
+                        # Now re-attach the @ref to repo_path_for_install
+                        repo_path_for_install += f"@{user_specified_ref}"
+
+
+                is_commit_hash_ref = False
+                if user_specified_ref:
+                    if re.fullmatch(r"[0-9a-fA-F]{7,40}", user_specified_ref): # Check for 7-40 hex chars
+                        is_commit_hash_ref = True
+                        logger.info(f"Detected commit hash ref: '{user_specified_ref}' for URL '{repo_url_raw}'")
+                    else:
+                        logger.info(f"Detected branch/tag ref: '{user_specified_ref}' for URL '{repo_url_raw}'")
+                else:
+                    logger.info(f"No specific ref detected (implies default branch) for URL '{repo_url_raw}'")
+
+                    # Determine egg_name
                 parsed_egg_name = None
                 if fragment_str and "egg=" in fragment_str:
-                    match = re.search(r"egg=([^&\[\]]+)", fragment_str) # Get content of egg= up to an extra or end
-                    if match:
-                        parsed_egg_name = match.group(1)
+                    # Extract base egg name, stripping any existing extras like [extra]
+                    egg_match_in_fragment = re.search(r"egg=([^&\[\]]+)", fragment_str)
+                    if egg_match_in_fragment:
+                        parsed_egg_name = egg_match_in_fragment.group(1)
 
                 if not parsed_egg_name:
-                    # Guess egg_name from URL path (part before any @ref or #fragment)
-                    url_path_for_egg_guess = base_url_for_pip.replace("git+", "").split('@')[0].split('#')[0]
-                    egg_name_match = re.search(r'/([^/]+?)(?:\.git)?$', url_path_for_egg_guess)
-                    parsed_egg_name = egg_name_match.group(1) if egg_name_match else f"customrepo{int(time.time())}"
+                    # Guess egg_name from the original URL path (before git+, @ref, or #fragment)
+                    url_for_egg_guess = repo_url_raw.split("://",1)[-1].split('@')[0].split('#')[0]
+                    egg_name_match_guess = re.search(r'/([^/]+?)(?:\.git)?$', url_for_egg_guess)
+                    parsed_egg_name = egg_name_match_guess.group(1) if egg_name_match_guess else f"customrepo{int(time.time())}"
 
                 sanitized_egg_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', parsed_egg_name)
 
-                # Construct the final pip URL
-                # The base_url_for_pip already includes git+ and any @ref
-                final_pip_url_with_egg = f"{base_url_for_pip}#egg={sanitized_egg_name}"
+                # Add timestamp extra to egg name UNLESS it's a commit hash ref
+                should_add_timestamp_extra = not is_commit_hash_ref
 
-                if not has_specific_ref:
-                    # If no specific ref, append a timestamped extra to the egg name to force refresh
-                    timestamp_extra = f"[upd{int(time.time())}]"
-                    final_pip_url_with_egg_and_extra = f"{base_url_for_pip}#egg={sanitized_egg_name}{timestamp_extra}"
-                    final_install_string = final_pip_url_with_egg_and_extra
-                else:
-                    # If a specific ref is present, just ensure egg name is there.
-                    final_install_string = final_pip_url_with_egg
+                current_egg_name_for_fragment = sanitized_egg_name
+                if should_add_timestamp_extra:
+                    timestamp_val = int(time.time())
+                    current_egg_name_for_fragment += f"[upd{timestamp_val}]" # Appends like myrepo[upd123]
 
-                    # Preserve other original fragment parts if they existed and weren't egg=
-                other_fragment_parts = []
-                if fragment_str:
+                # Construct the new fragment
+                new_fragment_parts = [f"egg={current_egg_name_for_fragment}"]
+                if fragment_str: # Add back other original fragment parts
                     for part in fragment_str.split('&'):
                         if not part.startswith("egg="):
-                            other_fragment_parts.append(part)
-                if other_fragment_parts: # Append them back if any
-                    if "#" not in final_install_string: # Should always be true here as we just added #egg=
-                        final_install_string += "&" + "&".join(other_fragment_parts)
-                    else: # If #egg= was already the start of the fragment
-                        final_install_string += "&" + "&".join(other_fragment_parts)
+                            new_fragment_parts.append(part)
 
+                final_install_string = f"{repo_path_for_install}#{'&'.join(new_fragment_parts)}"
 
                 if final_install_string not in requirements_list:
                     requirements_list.append(final_install_string)
@@ -133,7 +161,6 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
                     logger.info(f"Custom tool repository already in requirements (or duplicate attempt): {final_install_string}")
             else:
                 logger.warning(f"Skipping non-string or empty custom repository URL: {repo_url_original}")
-
 
     deployment_display_name = generate_vertex_deployment_display_name(original_config_name, agent_doc_id)
 
