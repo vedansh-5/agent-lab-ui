@@ -1,31 +1,38 @@
----
-name: Documentation Pull Request
-about: Submit documentation changes
-title: '[DOCS] '
-labels: 'documentation'
----
+# PR Template: Documentation Update
 
-## Documentation Changes
-Brief description of documentation changes.
+## Description of Documentation Changes
+Provide a brief summary of the documentation updates:
 
-### Type of Changes
-- [ ] New Documentation
-- [ ] Updates to Existing Docs
-- [ ] Code Comments
-- [ ] API Documentation
-- [ ] UI Text/Labels
+* What was added, removed, or updated?
+* Why were these changes needed?
+* Does this relate to recent features, fixes, or refactors?
 
-### Content Changes
+## Type of Changes
+Indicate the type of documentation updates:
+
+* [ ] New documentation pages
+* [ ] Revisions to existing content
+* [ ] Code comments or inline documentation
+* [ ] API reference updates
+* [ ] UI labels or help text
+
+## Content Comparison (if applicable)
+
 | Before | After |
 |--------|-------|
 | Old content | New content |
 
-### Validation
-- [ ] Technical Accuracy
-- [ ] Grammar and Spelling
-- [ ] Links Verified
-- [ ] Images/Screenshots Updated
-- [ ] Code Examples Tested
+## Validation Checklist
+Confirm the following items were reviewed:
 
-### Related Components
-List affected components/features.
+* [ ] Technical accuracy
+* [ ] Grammar, spelling, and clarity
+* [ ] All links are functional
+* [ ] Updated or verified images/screenshots
+* [ ] Code snippets/examples tested if present
+
+## Affected Components or Areas
+List any specific modules, files, or UI elements impacted by these changes.
+
+## Additional Context
+Provide any other context, references, or discussions relevant to this documentation update.

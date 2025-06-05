@@ -1,43 +1,51 @@
----
-name: Feature Pull Request
-about: Submit a new feature implementation
-title: '[FEATURE] '
-labels: 'feature'
----
+# PR Template: Feature Implementation
 
 ## Feature Description
-Brief description of the new feature.
+Briefly describe the new feature:
 
-### Implementation Details
-- [ ] Frontend Changes
-- [ ] Backend Changes
-- [ ] Agent Integration
-- [ ] Tool Integration
-- [ ] Database Changes
+* What does this feature do?
+* Why is it needed?
+* How does it improve or extend the project?
 
-### UI Changes
+## Implementation Details
+Check all areas affected by this feature:
+
+* [ ] Frontend changes
+* [ ] Backend changes
+* [ ] Agent integration
+* [ ] Tool integration
+* [ ] Database schema or data changes
+
+## UI Changes (if applicable)
+
 | Before | After |
 |--------|-------|
-| Image 1 | Image 2 |
+| Image or description | Image or description |
 
-### Testing Done
-- [ ] Unit Tests Added
-- [ ] E2E Tests Added
-- [ ] Local Testing Complete
-- [ ] Cross-browser Testing
-- [ ] Mobile Responsive Testing
+## Testing Performed
+Confirm the tests conducted to validate this feature:
 
-### Documentation
-- [ ] User Documentation
-- [ ] API Documentation
-- [ ] Code Comments
-- [ ] UI Help Text
+* [ ] Unit tests added
+* [ ] End-to-end tests added
+* [ ] Manual/local testing completed
+* [ ] Cross-browser compatibility tested
+* [ ] Mobile/responsive UI tested
 
-### Deployment Checklist
-- [ ] Firebase Configuration Updated
-- [ ] Environment Variables Added
-- [ ] Dependencies Updated
-- [ ] Migration Scripts (if needed)
+## Documentation Updates
+Verify documentation was updated accordingly:
 
-### Additional Notes
-Any extra information that might be helpful for reviewers.
+* [ ] User guides or manuals
+* [ ] API documentation
+* [ ] Inline code comments
+* [ ] UI help text or tooltips
+
+## Deployment Checklist
+Ensure deployment readiness:
+
+* [ ] Firebase or other service config updated
+* [ ] Environment variables added or updated
+* [ ] Dependencies upgraded
+* [ ] Database migration scripts created (if needed)
+
+## Additional Notes
+Any other relevant information for reviewers, known issues, or follow-up tasks.
