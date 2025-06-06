@@ -3,7 +3,7 @@
 Click the `Preview` tab and select a PR template:
 Please choose a template:
 
-- [Feature/Bug Fix](?expand=1&template=feature.md)
+- [Feature](?expand=1&template=feature.md)
 - [Documentation](?expand=1&template=docs.md)
 - [Bug Fix](?expand=1&template=bugfix.md)
 
