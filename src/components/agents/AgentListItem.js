@@ -70,8 +70,8 @@ const AgentListItem = ({ agent, onDeleteAgentConfig }) => { // Added onDeleteAge
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                     Type: <Typography component="span" fontWeight="medium">{agent.agentType || 'Agent'}</Typography>
                 </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                    Model: <Typography component="span" fontWeight="medium">{agent.model || 'N/A'}</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5,  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={agent.litellm_model_string || 'N/A'}>
+                    Model: <Typography component="span" fontWeight="medium">{agent.litellm_model_string || 'N/A (LiteLLM)'}</Typography>
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{
                     mb: 2,

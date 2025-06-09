@@ -7,6 +7,12 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
 import { Container, Typography, Box } from '@mui/material';
 import { PLATFORM_IDS, getPlatformById } from '../constants/platformConstants'; // For default platform and title
+import {
+    DEFAULT_LITELLM_MODEL_STRING,
+    DEFAULT_LITELLM_PROVIDER_ID, // Added import
+    DEFAULT_LITELLM_BASE_MODEL_ID, // Added import
+    MODEL_PROVIDERS_LITELLM      // Added import
+} from '../constants/agentConstants';
 
 const CreateAgentPage = ({ isEditMode = false }) => {
     const navigate = useNavigate();
@@ -28,14 +34,42 @@ const CreateAgentPage = ({ isEditMode = false }) => {
                     const agent = await getAgentDetails(agentId);
                     if (agent.userId !== currentUser.uid) {
                         setError("You are not authorized to edit this agent.");
-                        setInitialAgentData(null); // Clear any potentially stale data
+                        setInitialAgentData(null);
                         return;
                     }
+                    // Logic to parse provider and base model from agent.litellm_model_string
+                    let providerId = DEFAULT_LITELLM_PROVIDER_ID;
+                    let baseModelId = DEFAULT_LITELLM_BASE_MODEL_ID;
+                    if (agent.litellm_model_string) {
+                        const foundProvider = MODEL_PROVIDERS_LITELLM.find(
+                            p => p.prefix && agent.litellm_model_string.startsWith(p.prefix)
+                        );
+                        if (foundProvider) {
+                            providerId = foundProvider.id;
+                            const modelPart = agent.litellm_model_string.substring(foundProvider.prefix.length);
+                            if (foundProvider.models.some(m => m.id === modelPart)) {
+                                baseModelId = modelPart;
+                            } else {
+                                baseModelId = ''; // Model part not in predefined list for this provider
+                            }
+                        } else {
+                            providerId = 'custom'; // Assume custom if no known prefix matches
+                            baseModelId = '';
+                        }
+                    }
+
                     setInitialAgentData({
                         ...agent,
-                        platform: agent.platform || PLATFORM_IDS.GOOGLE_VERTEX, // Default if old agent
+                        platform: agent.platform || PLATFORM_IDS.GOOGLE_VERTEX,
                         childAgents: agent.childAgents || [],
                         maxLoops: agent.maxLoops || 3,
+                        // Set for the form's new state structure
+                        selectedProviderId: providerId,
+                        selectedBaseModelId: baseModelId,
+                        // Keep original values for direct use if custom or for display/reference
+                        litellm_model_string: agent.litellm_model_string || DEFAULT_LITELLM_MODEL_STRING,
+                        litellm_api_base: agent.litellm_api_base || '',
+                        litellm_api_key: agent.litellm_api_key || '',
                     });
                 } catch (err) {
                     console.error("Error fetching agent for edit:", err);
@@ -48,28 +82,29 @@ const CreateAgentPage = ({ isEditMode = false }) => {
         } else if (!isEditMode) {
             const platformFromState = location.state?.platformId || PLATFORM_IDS.GOOGLE_VERTEX;
             if (platformFromState !== PLATFORM_IDS.GOOGLE_VERTEX) {
-                // This case should not happen if routing is correct
                 setError(`Cannot create agent for platform ID "${platformFromState}" via this form. Please select Google Vertex AI.`);
                 setLoading(false);
-                // Optionally navigate back or show a more permanent error
-                // navigate('/dashboard');
                 return;
             }
             setInitialAgentData({
                 name: '',
                 description: '',
                 agentType: 'Agent',
-                model: 'gemini-1.5-flash-001',
+                selectedProviderId: DEFAULT_LITELLM_PROVIDER_ID,
+                selectedBaseModelId: DEFAULT_LITELLM_BASE_MODEL_ID,
+                litellm_model_string: DEFAULT_LITELLM_MODEL_STRING,
+                litellm_api_base: '',
+                litellm_api_key: '',
                 instruction: '',
                 tools: [],
                 maxLoops: 3,
                 childAgents: [],
-                platform: platformFromState, // Set platform for new agent
+                platform: platformFromState,
             });
             setLoading(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isEditMode, agentId, currentUser, navigate]); // location removed to prevent re-trigger on unrelated state changes
+    }, [isEditMode, agentId, currentUser, location.state]); // Added location.state
 
 
     const handleSaveAgent = async (agentData) => { // agentData now includes childAgents, maxLoops
@@ -146,4 +181,4 @@ const CreateAgentPage = ({ isEditMode = false }) => {
     );
 };
 
-export default CreateAgentPage;  
+export default CreateAgentPage;
