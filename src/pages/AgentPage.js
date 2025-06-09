@@ -74,7 +74,11 @@ const AgentPage = () => {
                 ...agentData,
                 platform: agentData.platform || PLATFORM_IDS.GOOGLE_VERTEX,
                 childAgents: agentData.childAgents || [],
-                maxLoops: agentData.maxLoops || (agentData.agentType === 'LoopAgent' ? 3 : undefined)
+                maxLoops: agentData.maxLoops || (agentData.agentType === 'LoopAgent' ? 3 : undefined),
+                // Ensure LiteLLM fields are present, even if undefined from old data
+                litellm_model_string: agentData.litellm_model_string,
+                litellm_api_base: agentData.litellm_api_base,
+                litellm_api_key: agentData.litellm_api_key,
             });
             if (!isPoll) setError(null);
 

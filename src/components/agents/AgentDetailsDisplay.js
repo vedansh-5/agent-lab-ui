@@ -2,8 +2,7 @@
 import React from 'react';
 import { Typography, Paper, List, ListItem, ListItemText, Box, Chip } from '@mui/material';
 import LoopIcon from '@mui/icons-material/Loop';
-import { getPlatformById } from '../../constants/platformConstants';
-import { MODEL_PROVIDERS } from '../../constants/agentConstants';
+import { getPlatformById } from '../../constants/platformConstants'; // Kept for platform display
 
 
 const AgentDetailsDisplay = ({ agent }) => {
@@ -12,26 +11,19 @@ const AgentDetailsDisplay = ({ agent }) => {
     const showParentConfigDisplay = agent.agentType === 'Agent' || agent.agentType === 'LoopAgent';
     const platformInfo = agent.platform ? getPlatformById(agent.platform) : null;
 
-    const getModelProviderName = (providerId) => {
-        const provider = MODEL_PROVIDERS.find(p => p.id === providerId);
-        return provider ? provider.name : 'Unknown Provider';
-    };
-
     const modelDisplay = () => {
-        const providerName = getModelProviderName(agent.modelProvider);
-        if (agent.modelProvider === 'openai_compatible') {
-            let endpointDisplay = agent.apiBase ? new URL(agent.apiBase).hostname : 'N/A';
-            if (agent.apiBase === agent.modelNameForEndpoint && agent.apiBase?.startsWith('http')) { // Heuristic for ollama/model format
-                endpointDisplay = agent.apiBase; // Show full if it's likely ollama/model
-            } else if (agent.apiBase && agent.modelNameForEndpoint && !agent.apiBase.endsWith(agent.modelNameForEndpoint)){
-                endpointDisplay = `${agent.apiBase} (model: ${agent.modelNameForEndpoint})`;
-            } else if (agent.modelNameForEndpoint) {
-                endpointDisplay = agent.modelNameForEndpoint;
-            }
-            return `${providerName}: ${endpointDisplay}`;
+        if (!agent.litellm_model_string) return "N/A (Model not configured)";
+        let display = `LiteLLM Model String: ${agent.litellm_model_string}`;
+        if (agent.litellm_api_base) {
+            display += `\nAPI Base: ${agent.litellm_api_base}`;
         }
-        // Default to Google Gemini (original behavior or if provider is undefined)
-        return `${providerName}: ${agent.model || 'N/A'}`;
+        // Avoid showing API key directly
+        if (agent.litellm_api_key) {
+            display += `\nAPI Key: Configured (not shown)`;
+        } else if (agent.litellm_api_base) { // If api_base is set but no key for it
+            display += `\nAPI Key: Not explicitly set for this base (may use environment default)`;
+        }
+        return display;
     };
 
 

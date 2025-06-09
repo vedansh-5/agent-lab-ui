@@ -193,18 +193,29 @@ async def _query_async_logic_internal(resource_name, message_text, adk_user_id, 
     if not all_events and not final_text_response and not combined_errors:
         logger.warn(f"Remote query for agent '{firestore_agent_id}' (session {current_adk_session_id}) resulted in no events, no response, and no errors. Attempting local diagnostic run.")
 
-        original_use_vertexai = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI")
-        original_gcp_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-        original_gcp_location = os.environ.get("GOOGLE_CLOUD_LOCATION")
-        original_api_key = os.environ.get("GOOGLE_API_KEY")
+        # Store original environment variables that might be relevant to LiteLLM or ADK
+        original_env_vars = {
+            key: os.environ.get(key) for key in [
+                "GOOGLE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", # Common LiteLLM keys
+                "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION" # For some LiteLLM Vertex integrations
+            ]
+        }
 
         try:
-            logger.info("Local Diagnostic: Setting environment for Vertex AI.")
-            os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
-            os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-            os.environ["GOOGLE_CLOUD_LOCATION"] = location
-            if "GOOGLE_API_KEY" in os.environ:
-                del os.environ["GOOGLE_API_KEY"]
+            logger.info("Local Diagnostic: Environment setup for LiteLLM based run.")
+            # For local diagnostic, API keys needed by LiteLLM (e.g. GOOGLE_API_KEY for google/* models)
+            # must be available in the Firebase Function's environment.
+            # We don't typically modify them here unless we are overriding for specific test.
+            # Ensure GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION are set if this function
+            # might be calling a LiteLLM provider that uses them (e.g. vertex_ai/*).
+            # This diagnostic runs *within the Firebase Function's environment*.
+            if project_id and "GOOGLE_CLOUD_PROJECT" not in os.environ:
+                os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
+                logger.info(f"Local Diagnostic: Temporarily set GOOGLE_CLOUD_PROJECT to {project_id}")
+            if location and "GOOGLE_CLOUD_LOCATION" not in os.environ:
+                os.environ["GOOGLE_CLOUD_LOCATION"] = location
+                logger.info(f"Local Diagnostic: Temporarily set GOOGLE_CLOUD_LOCATION to {location}")
+
 
             agent_doc_ref = db.collection("agents").document(firestore_agent_id)
             agent_snap = agent_doc_ref.get()
@@ -216,6 +227,7 @@ async def _query_async_logic_internal(resource_name, message_text, adk_user_id, 
                     local_diagnostic_errors.append(f"Local Diagnostic: Agent config data for '{firestore_agent_id}' is empty.")
                 else:
                     logger.info(f"Local Diagnostic: Instantiating agent '{agent_config_data.get('name', 'N/A')}' (config ID: {firestore_agent_id}) for local error check.")
+                    # instantiate_adk_agent_from_config now always uses LiteLlm internally
                     local_adk_agent = instantiate_adk_agent_from_config(agent_config_data, parent_adk_name_for_context=f"local_diag_{firestore_agent_id[:4]}")
 
                     local_session_service = InMemorySessionService()
@@ -249,27 +261,16 @@ async def _query_async_logic_internal(resource_name, message_text, adk_user_id, 
             tb_str = traceback.format_exc()
             diag_agent_name_for_error = agent_config_data.get('name', firestore_agent_id) if agent_config_data else firestore_agent_id
             local_diagnostic_errors.append(f"LOCAL DIAGNOSTIC ERROR for agent '{diag_agent_name_for_error}':\n{type(e_local_diag).__name__}: {str(e_local_diag)}\nTraceback:\n{tb_str}")
-        finally:
+        finally: # Restore environment
             logger.info("Local Diagnostic: Restoring original environment variables.")
-            if original_use_vertexai is None:
-                if "GOOGLE_GENAI_USE_VERTEXAI" in os.environ: del os.environ["GOOGLE_GENAI_USE_VERTEXAI"]
-            else:
-                os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = original_use_vertexai
-
-            if original_gcp_project is None:
-                if "GOOGLE_CLOUD_PROJECT" in os.environ: del os.environ["GOOGLE_CLOUD_PROJECT"]
-            else:
-                os.environ["GOOGLE_CLOUD_PROJECT"] = original_gcp_project
-
-            if original_gcp_location is None:
-                if "GOOGLE_CLOUD_LOCATION" in os.environ: del os.environ["GOOGLE_CLOUD_LOCATION"]
-            else:
-                os.environ["GOOGLE_CLOUD_LOCATION"] = original_gcp_location
-
-            if original_api_key is None:
-                if "GOOGLE_API_KEY" in os.environ: del os.environ["GOOGLE_API_KEY"]
-            else:
-                os.environ["GOOGLE_API_KEY"] = original_api_key
+            for key, value in original_env_vars.items():
+                if value is None:
+                    if key in os.environ:
+                        del os.environ[key]
+                        logger.info(f"Local Diagnostic: Cleared env var {key}")
+                else:
+                    os.environ[key] = value
+                    logger.info(f"Local Diagnostic: Restored env var {key}")
             logger.info("Local Diagnostic: Original environment variables restored.")
 
         if local_diagnostic_errors:
@@ -299,7 +300,7 @@ def _query_deployed_agent_logic(req: https_fn.CallableRequest):
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="resourceName, message, adkUserId, and agentDocId are required.")
 
     logger.info(f"Query Agent Wrapper: Agent '{resource_name}' (FS ID: {firestore_agent_id}) by adk_user '{adk_user_id}', firebase_auth_uid '{firebase_auth_uid}'.")
-    initialize_vertex_ai()
+    initialize_vertex_ai() # Still needed for VertexAiSessionService, and reasoning_engine.get()
     project_id, location, _ = get_gcp_project_config()
     result_data = {}
 

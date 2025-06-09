@@ -61,6 +61,7 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
     # Base requirements
     requirements_list = ["google-cloud-aiplatform[adk,agent_engines]>=1.93.1",
                          "gofannon",
+                         "litellm>=1.72.0" # Ensure LiteLLM is always included
                          ]
 
     # Add custom tool repositories if provided
@@ -201,4 +202,4 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
         if isinstance(e_deploy, https_fn.HttpsError): raise
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=f"Deployment to Vertex AI failed: {str(e_deploy)[:300]}. See function logs for details.")
 
-__all__ = ['_deploy_agent_to_vertex_logic']
+__all__ = ['_deploy_agent_to_vertex_logic']  
