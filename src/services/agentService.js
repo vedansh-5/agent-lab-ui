@@ -52,15 +52,22 @@ export const deployAgent = async (agentConfig, agentDocId) => {
     }
 };
 
-export const queryAgent = async (resourceName, message, userId, sessionId, agentDocId) => {
+export const queryAgent = async (resourceName, message, userId, sessionId, agentDocId, stuffedContextItems = null) => {
     try {
-        const result = await queryDeployedAgentCallable({
+        const payload = {
             resourceName,
             message,
             adkUserId: userId,
             sessionId,
             agentDocId
-        });
+        };
+        if (stuffedContextItems && stuffedContextItems.length > 0) {
+            // Serialize for Firestore if not already. Firestore can handle arrays of objects.
+            // If contents are very large, consider if they *really* need to be stored raw in the run doc.
+            // For now, assume they are manageable strings.
+            payload.stuffedContextItems = stuffedContextItems;
+        }
+        const result = await queryDeployedAgentCallable(payload);
         return result.data;
     } catch (error) {
         console.error("Error querying agent:", error);

@@ -5,3 +5,5 @@ gofannon
 requests # For fetching Gofannon manifest
 google-cloud-logging>=3.0.0
 litellm>=1.72.0
+PyPDF>=5.6.0
+PyGithub

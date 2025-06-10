@@ -17,7 +17,11 @@ from handlers.vertex_agent_handler import (
     _check_vertex_agent_deployment_status_logic
 )
 from handlers.gofannon_handler import _get_gofannon_tool_manifest_logic
-
+from handlers.context_handler import (
+    _fetch_web_page_content_logic,
+    _fetch_git_repo_contents_logic,
+    _process_pdf_content_logic
+)
 # --- Cloud Function Definitions ---  
 
 @https_fn.on_call(memory=options.MemoryOption.MB_512) # Default memory and timeout unless overridden
@@ -80,4 +84,22 @@ def check_vertex_agent_deployment_status(req: https_fn.CallableRequest):
 
 # To make these functions discoverable by Firebase CLI, ensure they are top-level  
 # and match the names you'd deploy (e.g., firebase deploy --only functions:get_gofannon_tool_manifest)  
-# The Python function name here becomes the Firebase Function name.  
+# The Python function name here becomes the Firebase Function name.
+
+@https_fn.on_call(memory=options.MemoryOption.MB_512, timeout_sec=60)
+@handle_exceptions_and_log # Assuming you have this decorator
+def fetch_web_page_content(req: https_fn.CallableRequest):
+    """Fetches raw content of a given web page URL."""
+    return _fetch_web_page_content_logic(req)
+
+@https_fn.on_call(memory=options.MemoryOption.GB_1, timeout_sec=300) # Potentially long running, more memory
+@handle_exceptions_and_log
+def fetch_git_repo_contents(req: https_fn.CallableRequest):
+    """Fetches specified file contents from a Git repository."""
+    return _fetch_git_repo_contents_logic(req)
+
+@https_fn.on_call(memory=options.MemoryOption.GB_1, timeout_sec=120) # PDF processing can be memory intensive
+@handle_exceptions_and_log
+def process_pdf_content(req: https_fn.CallableRequest):
+    """Processes a PDF from URL or uploaded data to extract text."""
+    return _process_pdf_content_logic(req)
