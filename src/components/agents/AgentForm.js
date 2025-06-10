@@ -8,7 +8,7 @@ import {
     AGENT_TYPES,
     MODEL_PROVIDERS_LITELLM,
     DEFAULT_LITELLM_PROVIDER_ID,
-    DEFAULT_LITELLM_BASE_MODEL_ID,
+    DEFAULT_LITELLM_BASE_MODEL_ID, // This is now the full model string for default
     getLiteLLMProviderConfig
 } from '../../constants/agentConstants';
 import { v4 as uuidv4 } from 'uuid';
@@ -52,11 +52,13 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [agentType, setAgentType] = useState(initialData.agentType || AGENT_TYPES[0]);
 
     // Model Selection State
-    const [selectedProviderId, setSelectedProviderId] = useState(DEFAULT_LITELLM_PROVIDER_ID);
-    const [selectedBaseModelId, setSelectedBaseModelId] = useState(DEFAULT_LITELLM_BASE_MODEL_ID);
+    // selectedBaseModelId stores the full LiteLLM model string (e.g., "gpt-4o", "gemini/gemini-1.5-flash-latest")
+    const [selectedProviderId, setSelectedProviderId] = useState(initialData.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID);
+    const [selectedBaseModelId, setSelectedBaseModelId] = useState(initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID);
 
-    // LiteLLM Configuration State (mainly for custom, but also to store final values)
-    const [litellmModelString, setLitellmModelString] = useState(initialData.litellm_model_string || `${getLiteLLMProviderConfig(DEFAULT_LITELLM_PROVIDER_ID).prefix}${DEFAULT_LITELLM_BASE_MODEL_ID}`);
+    // litellmModelString state is now primarily for the "custom" provider scenario or when user types directly
+    // For other providers, it will mirror selectedBaseModelId.
+    const [litellmModelString, setLitellmModelString] = useState(initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID);
     const [litellmApiBase, setLitellmApiBase] = useState(initialData.litellm_api_base || '');
     const [litellmApiKey, setLitellmApiKey] = useState(initialData.litellm_api_key || '');
 
@@ -81,124 +83,101 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [formError, setFormError] = useState('');
     const [nameError, setNameError] = useState('');
 
+    const initialDataProcessedRef = useRef(false); // To prevent re-processing initialData on every render
+
     // Derived state for UI
     const currentProviderConfig = getLiteLLMProviderConfig(selectedProviderId);
-    const availableBaseModels = currentProviderConfig?.models || [];
+    const availableBaseModels = currentProviderConfig?.models || []; // These are { id: "liteLLM_model_string", name: "Display Name" }
 
+    // Effect for initializing form state from initialData
     useEffect(() => {
-        // When provider changes, update model string and reset base model if new provider has models
+        if (initialData && !initialDataProcessedRef.current) {
+            setName(initialData.name || '');
+            setDescription(initialData.description || '');
+            setAgentType(initialData.agentType || AGENT_TYPES[0]);
+
+            let initialSelectedProvider = initialData.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID;
+            let initialModelString = initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID;
+
+            // If selectedProviderId is missing in initialData, try to infer it
+            if (!initialData.selectedProviderId && initialData.litellm_model_string) {
+                const foundProviderByPrefix = MODEL_PROVIDERS_LITELLM.find(
+                    p => p.prefix && initialData.litellm_model_string.startsWith(p.prefix)
+                );
+                if (foundProviderByPrefix) {
+                    initialSelectedProvider = foundProviderByPrefix.id;
+                } else if (!MODEL_PROVIDERS_LITELLM.some(p => p.id === initialSelectedProvider)) {
+                    initialSelectedProvider = 'custom'; // Fallback to custom
+                }
+            }
+            setSelectedProviderId(initialSelectedProvider);
+
+            const providerConf = getLiteLLMProviderConfig(initialSelectedProvider);
+            if (providerConf?.id !== 'custom' && providerConf?.models.some(m => m.id === initialModelString)) {
+                setSelectedBaseModelId(initialModelString);
+            } else if (providerConf?.id === 'custom') {
+                setSelectedBaseModelId(''); // No specific base model for custom
+            } else {
+                // If model string not in provider's list, or provider has no models
+                const firstModelOfProvider = providerConf?.models[0]?.id;
+                setSelectedBaseModelId(firstModelOfProvider || '');
+                initialModelString = firstModelOfProvider || (initialSelectedProvider === 'custom' ? initialModelString : '');
+            }
+            setLitellmModelString(initialModelString);
+
+            setLitellmApiBase(initialData.litellm_api_base || '');
+            setLitellmApiKey(initialData.litellm_api_key || '');
+            setInstruction(initialData.instruction || '');
+            const initialEnableCodeExec = initialData.enableCodeExecution || false;
+            setEnableCodeExecution(initialEnableCodeExec);
+            setSelectedTools(initialEnableCodeExec ? [] : (initialData.tools || []));
+            setUsedCustomRepoUrls(
+                initialEnableCodeExec ? [] : (
+                    initialData.usedCustomRepoUrls ||
+                    (initialData.tools?.filter(t => t.type === 'custom_repo' && t.sourceRepoUrl).map(t => t.sourceRepoUrl) || [])
+                )
+            );
+            setMaxLoops(initialData.maxLoops || 3);
+            setOutputKey(initialData.outputKey || '');
+            setChildAgents((initialData.childAgents || []).map(ca => ({ ...ca, id: ca.id || uuidv4() })));
+            setFormError('');
+            setNameError('');
+            initialDataProcessedRef.current = true; // Mark as processed
+        }
+    }, [initialData]);
+
+    // Effect for handling selectedProviderId change
+    useEffect(() => {
         const providerConf = getLiteLLMProviderConfig(selectedProviderId);
         if (providerConf) {
             if (selectedProviderId === 'custom') {
-                // For custom, litellmModelString is user-defined
-                // Keep existing litellmModelString or set to empty if it was from a provider
-                if (!initialData.litellm_model_string?.startsWith(providerConf.prefix || '')) {
-                    // If the existing model string doesn't seem like a custom one, clear it.
-                    if (!litellmModelString || MODEL_PROVIDERS_LITELLM.some(p => litellmModelString.startsWith(p.prefix || ''))) {
-                        setLitellmModelString('');
-                    }
+                setSelectedBaseModelId(''); // Clear base model selection
+                // Keep litellmModelString as is, or set from initialData if it was custom
+                if (initialData?.selectedProviderId === 'custom') {
+                    setLitellmModelString(initialData.litellm_model_string || '');
+                } else if (initialDataProcessedRef.current) { // Only clear if not initial load and was not custom
+                    setLitellmModelString('');
                 }
-                setSelectedBaseModelId(''); // No base model for custom
             } else if (providerConf.models && providerConf.models.length > 0) {
-                // Check if current selectedBaseModelId is valid for new provider
-                const newDefaultBaseModel = providerConf.models[0].id;
-                const currentBaseModelIsValid = providerConf.models.some(m => m.id === selectedBaseModelId);
-
-                let newBaseModelToSet = selectedBaseModelId;
-                if (!currentBaseModelIsValid || selectedProviderId !== initialDataParsedProviderIdRef.current) {
-                    newBaseModelToSet = newDefaultBaseModel;
-                }
-                setSelectedBaseModelId(newBaseModelToSet);
-                setLitellmModelString(`${providerConf.prefix}${newBaseModelToSet}`);
-            } else { // Provider with no predefined models (like potentially Azure if simplified)
+                // If current selectedBaseModelId is not valid for new provider, default to first model
+                const firstModelId = providerConf.models[0].id;
+                const currentBaseIsValid = providerConf.models.some(m => m.id === selectedBaseModelId);
+                const newBaseModel = currentBaseIsValid ? selectedBaseModelId : firstModelId;
+                setSelectedBaseModelId(newBaseModel);
+                setLitellmModelString(newBaseModel);
+            } else { // Provider with no predefined models
                 setSelectedBaseModelId('');
-                // For Azure, model string might need full user input or a specific format
-                if (selectedProviderId === 'azure') {
-                    setLitellmModelString(providerConf.prefix || ''); // e.g., "azure/"
-                } else {
-                    setLitellmModelString(providerConf.prefix || '');
-                }
+                setLitellmModelString('');
             }
         }
-        initialDataParsedProviderIdRef.current = selectedProviderId; // Track initial parse
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedProviderId]);
+    }, [selectedProviderId, initialData,  selectedBaseModelId]); // initialData to re-evaluate if it changes.
 
-    // Update litellmModelString when selectedBaseModelId changes for a non-custom provider
+    // Effect for handling selectedBaseModelId change (for non-custom providers)
     useEffect(() => {
         if (selectedProviderId !== 'custom' && selectedBaseModelId) {
-            const providerConf = getLiteLLMProviderConfig(selectedProviderId);
-            if (providerConf && providerConf.prefix !== null) {
-                setLitellmModelString(`${providerConf.prefix}${selectedBaseModelId}`);
-            }
+            setLitellmModelString(selectedBaseModelId);
         }
     }, [selectedBaseModelId, selectedProviderId]);
-
-
-    const initialDataParsedProviderIdRef = useRef(null);
-
-    useEffect(() => {
-        setName(initialData.name || '');
-        setDescription(initialData.description || '');
-        setAgentType(initialData.agentType || AGENT_TYPES[0]);
-
-        // Parse initial provider and model from initialData.litellm_model_string
-        let initialProvider = DEFAULT_LITELLM_PROVIDER_ID;
-        let initialBaseModel = DEFAULT_LITELLM_BASE_MODEL_ID;
-        let initialFullModelString = initialData.litellm_model_string || `${getLiteLLMProviderConfig(DEFAULT_LITELLM_PROVIDER_ID).prefix}${DEFAULT_LITELLM_BASE_MODEL_ID}`;
-
-        if (initialData.litellm_model_string) {
-            const foundProvider = MODEL_PROVIDERS_LITELLM.find(
-                p => p.prefix && initialData.litellm_model_string.startsWith(p.prefix)
-            );
-            if (foundProvider) {
-                initialProvider = foundProvider.id;
-                const modelPart = initialData.litellm_model_string.substring(foundProvider.prefix.length);
-                if (foundProvider.models.some(m => m.id === modelPart)) {
-                    initialBaseModel = modelPart;
-                } else if (foundProvider.id !== 'azure') { // For azure, modelPart might be the deployment name
-                    initialBaseModel = ''; // or a signal that it's a custom model within that provider
-                }
-            } else {
-                // Could be a custom model string without a known prefix
-                initialProvider = 'custom';
-                initialBaseModel = '';
-            }
-        }
-
-        initialDataParsedProviderIdRef.current = initialProvider;
-        setSelectedProviderId(initialProvider);
-        setSelectedBaseModelId(initialBaseModel);
-        setLitellmModelString(initialFullModelString);
-
-        setLitellmApiBase(initialData.litellm_api_base || '');
-        setLitellmApiKey(initialData.litellm_api_key || '');
-
-        setInstruction(initialData.instruction || '');
-        const initialEnableCodeExec = initialData.enableCodeExecution || false;
-        setEnableCodeExecution(initialEnableCodeExec);
-
-        const initialSelectedTools = initialEnableCodeExec ? [] : (initialData.tools || []);
-        setSelectedTools(initialSelectedTools);
-
-        let derivedInitialCustomRepoUrls = [];
-        if (initialData.usedCustomRepoUrls && Array.isArray(initialData.usedCustomRepoUrls)) {
-            derivedInitialCustomRepoUrls = initialData.usedCustomRepoUrls;
-        } else if (initialData.tools && Array.isArray(initialData.tools)) {
-            derivedInitialCustomRepoUrls = initialSelectedTools
-                .filter(st => st.type === 'custom_repo' && st.sourceRepoUrl)
-                .map(st => st.sourceRepoUrl);
-        }
-        const finalInitialCustomRepos = initialEnableCodeExec ? [] : derivedInitialCustomRepoUrls;
-        setUsedCustomRepoUrls(Array.from(new Set(finalInitialCustomRepos)));
-
-        setMaxLoops(initialData.maxLoops || 3);
-        setOutputKey(initialData.outputKey || '');
-        setChildAgents((initialData.childAgents || []).map(ca => ({ ...ca, id: ca.id || uuidv4() })));
-        setFormError('');
-        setNameError('');
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [initialData]);
 
 
     const handleCodeExecutionChange = (event) => {
@@ -272,16 +251,14 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             return;
         }
 
-        let finalLitellmModelString = litellmModelString;
-        if (selectedProviderId !== 'custom' && currentProviderConfig?.prefix && selectedBaseModelId) {
-            finalLitellmModelString = `${currentProviderConfig.prefix}${selectedBaseModelId}`;
-        } else if (selectedProviderId === 'azure' && currentProviderConfig?.prefix && !litellmModelString.startsWith(currentProviderConfig.prefix)) {
-            // For Azure, if user typed only deployment name, prefix it.
-            finalLitellmModelString = `${currentProviderConfig.prefix}${litellmModelString}`;
+        let finalModelStringForSubmit;
+        if (selectedProviderId === 'custom') {
+            finalModelStringForSubmit = litellmModelString.trim();
+        } else {
+            finalModelStringForSubmit = selectedBaseModelId; // This is the full model ID
         }
 
-
-        if (!finalLitellmModelString.trim()) {
+        if (!finalModelStringForSubmit) {
             setFormError('LiteLLM Model String is required.');
             return;
         }
@@ -292,9 +269,11 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             tools: enableCodeExecution ? [] : selectedTools,
             enableCodeExecution,
             usedCustomRepoUrls: enableCodeExecution ? [] : usedCustomRepoUrls,
-            litellm_model_string: finalLitellmModelString.trim(),
-            litellm_api_base: selectedProviderId === 'custom' || currentProviderConfig?.allowsCustomBase ? (litellmApiBase.trim() || null) : null,
-            litellm_api_key: selectedProviderId === 'custom' || currentProviderConfig?.allowsCustomKey ? (litellmApiKey.trim() || null) : null,
+
+            selectedProviderId: selectedProviderId,
+            litellm_model_string: finalModelStringForSubmit,
+            litellm_api_base: (currentProviderConfig?.allowsCustomBase && litellmApiBase.trim()) ? litellmApiBase.trim() : null,
+            litellm_api_key: (currentProviderConfig?.allowsCustomKey && litellmApiKey.trim()) ? litellmApiKey.trim() : null,
         };
 
         const trimmedOutputKey = outputKey.trim();
@@ -307,7 +286,15 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         }
         if (agentType === 'SequentialAgent' || agentType === 'ParallelAgent') {
             agentDataToSubmit.childAgents = childAgents.map(ca => {
-                const { id, ...restOfConfig } = ca;
+                const { id, ...restOfConfig } = ca; // Remove client-side id
+                // Ensure children also have selectedProviderId and a valid model string
+                if (!restOfConfig.selectedProviderId) {
+                    restOfConfig.selectedProviderId = DEFAULT_LITELLM_PROVIDER_ID;
+                }
+                if (!restOfConfig.litellm_model_string) {
+                    const childProvConf = getLiteLLMProviderConfig(restOfConfig.selectedProviderId);
+                    restOfConfig.litellm_model_string = childProvConf?.models[0]?.id || DEFAULT_LITELLM_BASE_MODEL_ID;
+                }
                 return restOfConfig;
             });
         }
@@ -351,10 +338,15 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     };
 
     const handleExistingAgentSelected = (selectedAgentFullConfig) => {
+        // Ensure the selected existing agent has the new fields, or default them
         const newChildAgent = {
             ...selectedAgentFullConfig,
             id: uuidv4(),
             agentType: selectedAgentFullConfig.agentType || AGENT_TYPES[0],
+            selectedProviderId: selectedAgentFullConfig.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID,
+            litellm_model_string: selectedAgentFullConfig.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID,
+            litellm_api_base: selectedAgentFullConfig.litellm_api_base || null,
+            litellm_api_key: selectedAgentFullConfig.litellm_api_key || null,
         };
         setChildAgents(prev => [...prev, newChildAgent]);
         setIsExistingAgentSelectorOpen(false);
@@ -403,7 +395,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
 
                     {showParentConfig && (
                         <>
-                            <Grid item xs={12} sm={selectedProviderId === 'custom' ? 12 : 6}>
+                            <Grid item xs={12} sm={6}>
                                 <FormControl fullWidth variant="outlined">
                                     <InputLabel id="modelProvider-label">LLM Provider (via LiteLLM)</InputLabel>
                                     <Select
@@ -416,11 +408,6 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                             <MenuItem key={provider.id} value={provider.id}>{provider.name}</MenuItem>
                                         ))}
                                     </Select>
-                                    {currentProviderConfig?.requiresApiKeyInEnv &&
-                                        <FormHelperText>
-                                            Ensure API Key ({currentProviderConfig.requiresApiKeyInEnv}) is in environment if not providing below.
-                                        </FormHelperText>
-                                    }
                                 </FormControl>
                             </Grid>
 
@@ -430,7 +417,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                         <InputLabel id="baseModel-label">Base Model</InputLabel>
                                         <Select
                                             labelId="baseModel-label"
-                                            value={selectedBaseModelId}
+                                            value={selectedBaseModelId} // This is the full model string (e.g., "gpt-4o")
                                             onChange={(e) => setSelectedBaseModelId(e.target.value)}
                                             label="Base Model"
                                         >
@@ -441,54 +428,56 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                     </FormControl>
                                 </Grid>
                             )}
-
-                            {(selectedProviderId === 'custom' || (currentProviderConfig && currentProviderConfig.id ==='azure' /* Azure example */)) && (
-                                <Grid item xs={12}>
-                                    <TextField
-                                        label="LiteLLM Model String"
-                                        id="litellmModelString"
-                                        value={litellmModelString}
-                                        onChange={(e) => setLitellmModelString(e.target.value)}
-                                        fullWidth variant="outlined" required
-                                        helperText={
-                                            selectedProviderId === 'azure'
-                                                ? 'For Azure, include prefix, e.g., "azure/your-deployment-name"'
-                                                : 'Full model string, e.g., "custom_provider/my-model-id", or from LiteLLM docs.'
+                            <Grid item xs={12}>
+                                <TextField
+                                    label="LiteLLM Model String"
+                                    id="litellmModelString"
+                                    value={litellmModelString} // Display current model string
+                                    onChange={(e) => {
+                                        if (selectedProviderId === 'custom') { // Only allow direct edit if custom
+                                            setLitellmModelString(e.target.value);
                                         }
-                                    />
-                                </Grid>
-                            )}
+                                    }}
+                                    fullWidth variant="outlined" required
+                                    disabled={selectedProviderId !== 'custom'} // Disabled if not custom, as it's derived
+                                    helperText={
+                                        selectedProviderId === 'custom'
+                                            ? 'Full model string as LiteLLM expects it (e.g., "ollama/mistral", "groq/mixtral-8x7b-32768").'
+                                            : `Selected model: ${litellmModelString || "N/A"}. Change via dropdowns.`
+                                    }
+                                    error={formError.includes('LiteLLM Model String')}
+                                />
+                            </Grid>
 
 
-                            {(selectedProviderId === 'custom' || currentProviderConfig?.allowsCustomBase) && (
-                                <Grid item xs={12} sm={(selectedProviderId === 'custom' || currentProviderConfig?.allowsCustomKey) ? 6 : 12}>
+                            {currentProviderConfig?.allowsCustomBase && (
+                                <Grid item xs={12} sm={currentProviderConfig?.allowsCustomKey ? 6 : 12}>
                                     <TextField
-                                        label="API Base URL (Optional)"
+                                        label="API Base URL (Override)"
                                         id="litellmApiBase"
                                         value={litellmApiBase}
                                         onChange={(e) => setLitellmApiBase(e.target.value)}
                                         fullWidth variant="outlined"
-                                        placeholder="e.g., http://localhost:8000/v1"
-                                        helperText="For custom endpoints. Leave blank for standard providers if keys are in env."
+                                        placeholder={`Default: ${currentProviderConfig?.apiBase || 'Not set for this provider'}`}
+                                        helperText="Overrides provider default. Only if this provider allows it."
                                     />
                                 </Grid>
                             )}
 
-                            {(selectedProviderId === 'custom' || currentProviderConfig?.allowsCustomKey) && (
-                                <Grid item xs={12} sm={(selectedProviderId === 'custom' || currentProviderConfig?.allowsCustomBase) ? 6 : 12}>
+                            {currentProviderConfig?.allowsCustomKey && (
+                                <Grid item xs={12} sm={currentProviderConfig?.allowsCustomBase ? 6 : 12}>
                                     <TextField
-                                        label="API Key (Optional)"
+                                        label="API Key (Override)"
                                         id="litellmApiKey"
                                         type="password"
                                         value={litellmApiKey}
                                         onChange={(e) => setLitellmApiKey(e.target.value)}
                                         fullWidth variant="outlined"
-                                        helperText="API key for custom endpoint or to override env vars."
+                                        helperText={`Overrides key from env var (${currentProviderConfig?.requiresApiKeyInEnv || 'N/A'}). Only if provider allows.`}
                                         autoComplete="new-password"
                                     />
                                 </Grid>
                             )}
-
                             <Grid item xs={12}>
                                 <TextField
                                     label="Output Key (Optional)"
