@@ -6,9 +6,9 @@ jobs:
   deploy_functions:
     name: Deploy Functions
     runs-on: ubuntu-latest
-    if: |
-      secrets.FIREBASE_CONFIG_JSON != '' &&
-      secrets.FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI != ''
+    # if: |
+    #   secrets.FIREBASE_CONFIG_JSON != '' &&
+    #   secrets.FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI != ''
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
