@@ -173,7 +173,7 @@ const ChildAgentFormDialog = ({
                 setLitellmModelString('');
             }
         }
-    }, [selectedProviderId, open, childAgentData]);
+    }, [selectedProviderId, open, childAgentData, selectedBaseModelId]);
 
     // Effect for handling selectedBaseModelId change (for non-custom providers)
     useEffect(() => {

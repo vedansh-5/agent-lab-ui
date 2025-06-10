@@ -2,7 +2,7 @@
 import React from 'react';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions, Button,
-    Typography, Accordion, AccordionSummary, AccordionDetails, Box, Chip
+    Typography, Accordion, AccordionSummary, AccordionDetails,  Chip
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DescriptionIcon from '@mui/icons-material/Description'; // Generic file icon

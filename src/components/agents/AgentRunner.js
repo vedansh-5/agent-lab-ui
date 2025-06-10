@@ -164,7 +164,7 @@ const AgentRunner = ({
                 setConversation([]); // Clear if it contains historical context markers
             }
         }
-    }, [historicalRunData, isHistoricalView]);
+    }, [historicalRunData, isHistoricalView, conversation]);
 
 
     const handleOpenReasoningLog = (events) => {
