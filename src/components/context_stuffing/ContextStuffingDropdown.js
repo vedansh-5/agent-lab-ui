@@ -1,7 +1,6 @@
 // src/components/context_stuffing/ContextStuffingDropdown.js
 import React, { useState } from 'react';
 import { Button, Menu, MenuItem } from '@mui/material';
-import FileUploadIcon from '@mui/icons-material/FileUpload'; // Or a more generic "add context" icon
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 
 const ContextStuffingDropdown = ({ onOptionSelected, disabled }) => {
