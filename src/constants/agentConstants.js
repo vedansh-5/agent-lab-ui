@@ -3,11 +3,11 @@ export const AGENT_TYPES = ["Agent", "SequentialAgent", "LoopAgent", "ParallelAg
 
 export const MODEL_PROVIDERS_LITELLM = [
     {
-        id: 'together',
-        name: 'TogetherAI (via LiteLLM)',
-        prefix: 'together/', // Maintained for UI parsing/display if needed
+        id: 'together_ai',
+        name: 'TogetherAI',
+        prefix: 'together_ai/', // Maintained for UI parsing/display if needed
         models: [
-            // IDs are now what LiteLLM expects for its 'model' parameter
+
             { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', name: 'Llama 3.3 70B Turbo' },
             { id: 'meta-llama/Llama-4-Scout-17B-16E-Instruct ', name: 'Llama 4 Scout 17b 16E Instruct' },
             { id: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8', name: 'Llama 4 Maverick 17B 128E Instruct FP8' }, // Older, but kept for example
@@ -35,7 +35,7 @@ export const MODEL_PROVIDERS_LITELLM = [
     },
     {
         id: 'openai',
-        name: 'OpenAI (via LiteLLM)',
+        name: 'OpenAI',
         prefix: 'openai/', // Maintained for UI parsing/display
         models: [
             { id: 'gpt-4o-mini-2024-07-18', name: 'GPT-4o Mini'},
@@ -52,7 +52,7 @@ export const MODEL_PROVIDERS_LITELLM = [
     },
     {
         id: 'anthropic',
-        name: 'Anthropic (via LiteLLM)',
+        name: 'Anthropic',
         prefix: 'anthropic/', // Maintained for UI parsing/display
         models: [
             { id: 'claude-opus-4-20250514', name: 'Claude 4 Opus'},
@@ -81,7 +81,7 @@ export const MODEL_PROVIDERS_LITELLM = [
 ];
 
 // Determine the default provider and model based on the updated structure
-const defaultProvider = MODEL_PROVIDERS_LITELLM.find(p => p.id === 'together') || MODEL_PROVIDERS_LITELLM[0];
+const defaultProvider = MODEL_PROVIDERS_LITELLM.find(p => p.id === 'together_ai') || MODEL_PROVIDERS_LITELLM[0];
 const defaultBaseModel = defaultProvider.models.find(m => m.id === 'meta-llama/Llama-3.3-70B-Instruct-Turbo') || defaultProvider.models[0];
 
 export const DEFAULT_LITELLM_PROVIDER_ID = defaultProvider.id;

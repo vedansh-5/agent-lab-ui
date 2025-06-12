@@ -40,18 +40,11 @@ PYTHON_AGENT_CONSTANTS = {
         "allowsCustomBase": True,
         "allowsCustomKey": True,
     },
-    "groq": {
-        "id": "groq",
-        "apiBase": "https://api.groq.com/openai/v1",
-        "requiresApiKeyInEnv": "GROQ_API_KEY",
+    "together_ai": {
+        "id": "together_ai",
+        "apiBase": "https://api.together.xyz/v1",
+        "requiresApiKeyInEnv": "TOGETHER_API_KEY",
         "allowsCustomBase": False,
-        "allowsCustomKey": False,
-    },
-    "ollama": {
-        "id": "ollama",
-        "apiBase": "http://localhost:11434", # Default
-        "requiresApiKeyInEnv": None,
-        "allowsCustomBase": True,
         "allowsCustomKey": False,
     },
     "custom": {
@@ -101,10 +94,8 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
                 selected_provider_id = "anthropic"
             elif model_for_litellm.startswith("azure/"):
                 selected_provider_id = "azure"
-            elif model_for_litellm.startswith("groq/"):
-                selected_provider_id = "groq"
-            elif model_for_litellm.startswith("ollama/"):
-                selected_provider_id = "ollama"
+            elif model_for_litellm.startswith("together_ai/"):
+                selected_provider_id = "together_ai"
                 # Add more inferences if needed
             if not selected_provider_id:
                 selected_provider_id = "custom" # Fallback to custom if no prefix match
