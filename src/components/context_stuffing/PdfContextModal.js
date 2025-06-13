@@ -1,6 +1,6 @@
 // src/components/context_stuffing/PdfContextModal.js
 import React, { useState, useRef } from 'react';
-import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Box, Typography, Input } from '@mui/material';
+import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Box, Typography } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 
 const PdfContextModal = ({ open, onClose, onSubmit }) => {
@@ -103,10 +103,10 @@ const PdfContextModal = ({ open, onClose, onSubmit }) => {
                         disabled={!!pdfUrl.trim()}
                     >
                         Upload PDF (Option 2)
-                        <Input
+                        <input
                             type="file"
                             hidden
-                            inputRef={fileInputRef}
+                            ref={fileInputRef}     
                             onChange={handleFileChange}
                             accept="application/pdf"
                         />
