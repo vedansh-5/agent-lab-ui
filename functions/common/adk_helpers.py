@@ -11,13 +11,13 @@ from google.genai import types as genai_types # For GenerateContentConfig
 
 # This dictionary should mirror the structure of MODEL_PROVIDERS_LITELLM in agentConstants.js
 PYTHON_AGENT_CONSTANTS = {
-    "google": {
-        "id": "google",
+    "gemini": {
+        "id": "gemini",
         "apiBase": "https://generativelanguage.googleapis.com/v1beta",
         "requiresApiKeyInEnv": "GOOGLE_API_KEY",
         "allowsCustomBase": False,
         "allowsCustomKey": False,
-        "liteLlmModelPrefix": "gemini"
+        "liteLlmModelPrefix": "gemini" # For models like gemini-1.5-flash, will become gemini/gemini-1.5-flash
     },
     "openai": {
         "id": "openai",
@@ -25,7 +25,7 @@ PYTHON_AGENT_CONSTANTS = {
         "requiresApiKeyInEnv": "OPENAI_API_KEY",
         "allowsCustomBase": True,
         "allowsCustomKey": True,
-        "liteLlmModelPrefix": "openai"
+        "liteLlmModelPrefix": "openai" # For models like gpt-4o, will become openai/gpt-4o
     },
     "anthropic": {
         "id": "anthropic",
@@ -33,15 +33,15 @@ PYTHON_AGENT_CONSTANTS = {
         "requiresApiKeyInEnv": "ANTHROPIC_API_KEY",
         "allowsCustomBase": False,
         "allowsCustomKey": False,
-        "liteLlmModelPrefix": "anthropic"
+        "liteLlmModelPrefix": "anthropic" # For claude-3-opus, will become anthropic/claude-3-opus
     },
     "azure": {
         "id": "azure",
-        "apiBase": None,
+        "apiBase": None, # Should be set via AZURE_API_BASE env var or user override
         "requiresApiKeyInEnv": "AZURE_API_KEY",
         "allowsCustomBase": True,
         "allowsCustomKey": True,
-        "liteLlmModelPrefix": "azure"
+        "liteLlmModelPrefix": None # Azure models are prefixed with "azure/" explicitly
     },
     "together_ai": {
         "id": "together_ai",
@@ -49,15 +49,15 @@ PYTHON_AGENT_CONSTANTS = {
         "requiresApiKeyInEnv": "TOGETHER_AI_API_KEY",
         "allowsCustomBase": False,
         "allowsCustomKey": False,
-        "liteLlmModelPrefix": "together_ai"
+        "liteLlmModelPrefix": "together_ai" # For models like meta-llama/Llama-3..., will become together_ai/meta-llama/Llama-3...
     },
     "custom": {
         "id": "custom",
-        "apiBase": None,
-        "requiresApiKeyInEnv": None,
+        "apiBase": None, # User must provide
+        "requiresApiKeyInEnv": None, # User handles keys
         "allowsCustomBase": True,
         "allowsCustomKey": True,
-        "liteLlmModelPrefix": None
+        "liteLlmModelPrefix": None # No prefixing for custom
     }
 }
 
@@ -86,20 +86,20 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         logger.warn(f"Missing 'selectedProviderId' in agent config '{agent_config.get('name', 'N/A')}' {context_for_log}. Attempting to infer.")
         if base_model_name_from_config:
             if "gpt" in base_model_name_from_config.lower(): selected_provider_id = "openai"
-            elif "gemini" in base_model_name_from_config.lower(): selected_provider_id = "google"
+            elif "gemini" in base_model_name_from_config.lower(): selected_provider_id = "gemini"
             elif "claude" in base_model_name_from_config.lower(): selected_provider_id = "anthropic"
             elif "mixtral" in base_model_name_from_config.lower() or "llama" in base_model_name_from_config.lower() : selected_provider_id = "together_ai"
         if not selected_provider_id :
-            selected_provider_id = "google"
+            selected_provider_id = "gemini"
             base_model_name_from_config = base_model_name_from_config or "gemini-1.5-flash-latest"
             logger.warn(f"Could not infer provider. Defaulting to '{selected_provider_id}' and model '{base_model_name_from_config}'.")
 
     if not base_model_name_from_config:
         if selected_provider_id == "openai": base_model_name_from_config = "gpt-3.5-turbo"
-        elif selected_provider_id == "google": base_model_name_from_config = "gemini-1.5-flash-latest"
+        elif selected_provider_id == "gemini": base_model_name_from_config = "gemini-1.5-flash-latest"
         elif selected_provider_id == "anthropic": base_model_name_from_config = "claude-3-haiku-20240307"
         elif selected_provider_id == "together_ai": base_model_name_from_config = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-        else: base_model_name_from_config = "gemini-1.5-flash-latest"
+        else: base_model_name_from_config = "gemini-1.5-flash-latest" # Fallback default
         logger.warn(f"Missing 'litellm_model_string'. Defaulting to '{base_model_name_from_config}' for provider '{selected_provider_id}'.")
 
     provider_constants = get_provider_constants_py(selected_provider_id)
@@ -114,11 +114,12 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         final_api_base = provider_constants.get("apiBase")
 
     if selected_provider_id == "azure":
+        # For Azure, AZURE_API_BASE from env is primary unless user overrides.
         final_api_base = os.getenv("AZURE_API_BASE")
-        if not final_api_base and not user_api_base_override :
-            logger.error("Azure provider: AZURE_API_BASE env var not set and not overridden by user. LiteLLM will likely fail.")
-        elif user_api_base_override:
+        if user_api_base_override: # User override takes precedence even for Azure
             final_api_base = user_api_base_override
+        if not final_api_base :
+            logger.error("Azure provider: AZURE_API_BASE env var not set and not overridden by user. LiteLLM will likely fail.")
 
     final_api_key = None
     if user_api_key_override and provider_constants.get("allowsCustomKey"):
@@ -128,21 +129,40 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         if api_key_env_var_name:
             final_api_key = os.getenv(api_key_env_var_name)
             if not final_api_key:
-                logger.warn(f"API key env var '{api_key_env_var_name}' for '{selected_provider_id}' not set.")
+                logger.warn(f"API key env var '{api_key_env_var_name}' for provider '{selected_provider_id}' not set. LiteLLM may fail if key is required.")
 
+                # Determine the final model string for LiteLLM
     final_model_str_for_litellm = base_model_name_from_config
-    if selected_provider_id in ["openai", "anthropic", "together_ai", "google"] and \
-            not final_api_base:
-        lite_llm_prefix = provider_constants.get("liteLlmModelPrefix")
-        if lite_llm_prefix and not base_model_name_from_config.startswith(lite_llm_prefix + "/"):
-            if "/" not in base_model_name_from_config: # Avoid prefixing "user/model" if user already provided full string
-                final_model_str_for_litellm = f"{lite_llm_prefix}/{base_model_name_from_config}"
+
+    if selected_provider_id == "custom":
+        # For custom provider, the user is expected to provide the full model string.
+        # No prefixing is done by default.
+        pass
     elif selected_provider_id == "azure":
-        if not base_model_name_from_config.startswith("azure/"):
-            final_model_str_for_litellm = f"azure/{base_model_name_from_config}"
+        # Azure has its own prefixing convention, typically azure/<deployment_name>.
+        # The base_model_name_from_config for Azure should be the deployment name.
+        if not final_model_str_for_litellm.startswith("azure/"):
+            final_model_str_for_litellm = f"azure/{final_model_str_for_litellm}"
+    else:
+        # For other standard providers (openai, anthropic, together_ai, gemini, etc.)
+        lite_llm_prefix = provider_constants.get("liteLlmModelPrefix")
+        if lite_llm_prefix: # Check if a prefix is defined for this provider
+            # Prepend the prefix if the model string doesn't already start with "prefix/"
+            # This handles cases where base_model_name_from_config might be "gpt-3.5-turbo" or "meta-llama/Llama-3"
+            if not final_model_str_for_litellm.startswith(f"{lite_llm_prefix}/"):
+                final_model_str_for_litellm = f"{lite_llm_prefix}/{final_model_str_for_litellm}"
+                # If it already starts with the prefix, no change is needed.
+        else:
+            # This case might occur if a new provider is added to PYTHON_AGENT_CONSTANTS
+            # without a liteLlmModelPrefix, and it's not 'custom' or 'azure'.
+            logger.warn(
+                f"Provider '{selected_provider_id}' is not 'custom' or 'azure' but has no 'liteLlmModelPrefix' defined "
+                f"in PYTHON_AGENT_CONSTANTS. Using model string as is: '{base_model_name_from_config}'. "
+                f"This might lead to errors if LiteLLM expects a prefixed model string for this provider."
+            )
 
     logger.info(f"Configuring LiteLlm for agent '{adk_agent_name}' (Provider: {selected_provider_id}): "
-                f"Model='{final_model_str_for_litellm}', API Base='{final_api_base or 'Default/Env'}', ")
+                f"Model='{final_model_str_for_litellm}', API Base='{final_api_base or 'Default/Env'}', KeySet={'Yes' if final_api_key else 'No'}")
 
     if selected_provider_id == "azure" and not os.getenv("AZURE_API_VERSION"):
         logger.warn("Azure provider: AZURE_API_VERSION env var not set. LiteLLM may require it.")
@@ -153,8 +173,6 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         api_key=final_api_key
     )
 
-    # Code execution logic removed here.
-
     agent_kwargs = {
         "name": adk_agent_name,
         "description": agent_config.get("description"),
@@ -162,9 +180,6 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         "instruction": agent_config.get("instruction"),
         "tools": instantiated_tools,
         "output_key": agent_config.get("outputKey"),
-        # tool_config is not set here for code execution anymore.
-        # If other tool_config features are needed (e.g. for function calling mode for Gemini),
-        # they would need to be handled separately. For now, removing it simplifies.
     }
 
     model_settings = agent_config.get("modelSettings", {})
@@ -184,14 +199,6 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         except (ValueError, TypeError): logger.warning(f"Invalid topK: {model_settings['topK']}")
     if "stopSequences" in model_settings and isinstance(model_settings["stopSequences"], list):
         current_generate_content_config_kwargs["stop_sequences"] = [str(seq) for seq in model_settings["stopSequences"]]
-
-        # Note: If `final_agent_tool_config` was previously set for non-code-execution purposes
-    # (e.g. Gemini function calling mode), that logic would need to be preserved or re-evaluated.
-    # Since the request was to *drop* code execution, I'm assuming `tool_config` was primarily for that.
-    # If `instantiated_tools` exist and `actual_model_for_adk` is Gemini based,
-    # ADK's LlmAgent might internally set a default tool_config.
-    # If you need explicit control over function_calling_config for Gemini models even when using LiteLLM,
-    # that might need a more nuanced setup. For now, this simplifies by not setting agent_kwargs["tool_config"].
 
     if current_generate_content_config_kwargs:
         agent_kwargs["generate_content_config"] = genai_types.GenerateContentConfig(**current_generate_content_config_kwargs)
@@ -280,8 +287,6 @@ def sanitize_adk_agent_name(name_str: str, prefix_if_needed: str = "agent_") -> 
         return generic_name[:63]
     return sanitized
 
-# Removed _create_code_executor_agent function
-
 def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context="root", child_index=0):
     original_agent_name = agent_config.get('name', f'agent_cfg_{child_index}')
     unique_base_name_for_adk = f"{original_agent_name}_{parent_adk_name_for_context}_{os.urandom(2).hex()}"
@@ -352,7 +357,7 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
         looped_agent_adk_name = sanitize_adk_agent_name(f"{adk_agent_name}_looped_child_instance", prefix_if_needed="looped_")
 
         looped_agent_kwargs = _prepare_agent_kwargs_from_config(
-            agent_config,
+            agent_config, # LoopAgent uses its own config for the looped child
             looped_agent_adk_name,
             context_for_log=f"(looped child of LoopAgent '{adk_agent_name}', original config: '{looped_agent_config_name}')"
         )

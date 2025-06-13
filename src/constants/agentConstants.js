@@ -18,14 +18,14 @@ export const MODEL_PROVIDERS_LITELLM = [
         allowsCustomKey: false,
     },
     {
-        id: 'google',
+        id: 'gemini',
         name: 'Google (via LiteLLM)',
-        prefix: 'google/', // Maintained for UI parsing/display if needed
+        prefix: 'gemini/', // Maintained for UI parsing/display if needed
         models: [
             // IDs are now what LiteLLM expects for its 'model' parameter
             { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 2.5 Flash' },
             { id: 'gemini-2.5-pro-preview-05-06 ', name: 'Gemini 2.5 Pro Preview' },
-            { id: 'gemini-2.0-flash-lite-001', name: 'Gemini 2.0 Flash Lite' }, // Older, but kept for example
+            { id: 'gemini-2.0-flash-lite-001', name: 'Gemini 2.0 Flash Lite' },
             { id: 'gemini-2.0-flash-001', name: 'Gemini 2.0 Flash' },
         ],
         apiBase: 'https://generativelanguage.googleapis.com/v1beta/openai',
