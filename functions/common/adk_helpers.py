@@ -9,60 +9,26 @@ from google.adk.tools.agent_tool import AgentTool
 from google.adk.models.lite_llm import LiteLlm
 from google.genai import types as genai_types # For GenerateContentConfig
 
-# This dictionary should mirror the structure of MODEL_PROVIDERS_LITELLM in agentConstants.js
-PYTHON_AGENT_CONSTANTS = {
-    "gemini": {
-        "id": "gemini",
-        "apiBase": "https://generativelanguage.googleapis.com/v1beta",
-        "requiresApiKeyInEnv": "GOOGLE_API_KEY",
-        "allowsCustomBase": False,
-        "allowsCustomKey": False,
-        "liteLlmModelPrefix": "gemini" # For models like gemini-1.5-flash, will become gemini/gemini-1.5-flash
-    },
-    "openai": {
-        "id": "openai",
-        "apiBase": "https://api.openai.com/v1",
-        "requiresApiKeyInEnv": "OPENAI_API_KEY",
-        "allowsCustomBase": True,
-        "allowsCustomKey": True,
-        "liteLlmModelPrefix": "openai" # For models like gpt-4o, will become openai/gpt-4o
-    },
-    "anthropic": {
-        "id": "anthropic",
-        "apiBase": "https://api.anthropic.com/v1",
-        "requiresApiKeyInEnv": "ANTHROPIC_API_KEY",
-        "allowsCustomBase": False,
-        "allowsCustomKey": False,
-        "liteLlmModelPrefix": "anthropic" # For claude-3-opus, will become anthropic/claude-3-opus
-    },
-    "azure": {
-        "id": "azure",
-        "apiBase": None, # Should be set via AZURE_API_BASE env var or user override
-        "requiresApiKeyInEnv": "AZURE_API_KEY",
-        "allowsCustomBase": True,
-        "allowsCustomKey": True,
-        "liteLlmModelPrefix": None # Azure models are prefixed with "azure/" explicitly
-    },
-    "together_ai": {
-        "id": "together_ai",
-        "apiBase": "https://api.together.xyz/v1",
-        "requiresApiKeyInEnv": "TOGETHER_AI_API_KEY",
-        "allowsCustomBase": False,
-        "allowsCustomKey": False,
-        "liteLlmModelPrefix": "together_ai" # For models like meta-llama/Llama-3..., will become together_ai/meta-llama/Llama-3...
-    },
-    "custom": {
-        "id": "custom",
-        "apiBase": None, # User must provide
-        "requiresApiKeyInEnv": None, # User handles keys
-        "allowsCustomBase": True,
-        "allowsCustomKey": True,
-        "liteLlmModelPrefix": None # No prefixing for custom
-    }
+# This mapping helps the backend determine LiteLLM prefixes and expected API key env vars.
+# It's a simplified version of what was in PYTHON_AGENT_CONSTANTS before,
+# as the frontend now sends more structured data.
+BACKEND_LITELLM_PROVIDER_CONFIG = {
+    "openai": {"prefix": "openai", "apiKeyEnv": "OPENAI_API_KEY"},
+    "openai_compatible": {"prefix": "openai", "apiKeyEnv": None}, # User provides key/base
+    "google_ai_studio": {"prefix": "gemini", "apiKeyEnv": "GEMINI_API_KEY"},
+    "anthropic": {"prefix": "anthropic", "apiKeyEnv": "ANTHROPIC_API_KEY"},
+    "bedrock": {"prefix": "bedrock", "apiKeyEnv": "AWS_ACCESS_KEY_ID"}, # Needs others like SECRET, REGION
+    "meta_llama": {"prefix": "meta_llama", "apiKeyEnv": "LLAMA_API_KEY"},
+    "mistral": {"prefix": "mistral", "apiKeyEnv": "MISTRAL_API_KEY"},
+    "watsonx": {"prefix": "watsonx", "apiKeyEnv": "WATSONX_APIKEY"}, # Needs WATSONX_URL, WATSONX_PROJECT_ID
+    "deepseek": {"prefix": "deepseek", "apiKeyEnv": "DEEPSEEK_API_KEY"},
+    "deepinfra": {"prefix": "deepinfra", "apiKeyEnv": "DEEPINFRA_API_KEY"},
+    "replicate": {"prefix": "replicate", "apiKeyEnv": "REPLICATE_API_KEY"},
+    "together_ai": {"prefix": "together_ai", "apiKeyEnv": "TOGETHER_AI_API_KEY"},
+    "azure": {"prefix": "azure", "apiKeyEnv": "AZURE_API_KEY"}, # Needs AZURE_API_BASE, AZURE_API_VERSION
+    "custom": {"prefix": None, "apiKeyEnv": None} # No prefix, user provides full string
 }
 
-def get_provider_constants_py(provider_id: str):
-    return PYTHON_AGENT_CONSTANTS.get(provider_id)
 
 def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context_for_log: str = ""):
     logger.info(f"Preparing kwargs for ADK agent '{adk_agent_name}' {context_for_log}. Original config name: '{agent_config.get('name', 'N/A')}'")
@@ -78,100 +44,107 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
             logger.warn(f"Skipping tool for agent '{adk_agent_name}' due to error: {e} (Tool config: {tc.get('id', f'index_{tc_idx}')})")
 
     selected_provider_id = agent_config.get("selectedProviderId")
+    # `litellm_model_string` from frontend:
+    # - For standard providers: It's the base model name (e.g., "gpt-4o", "claude-3-opus-20240229").
+    # - For "custom" or "openai_compatible": It's the full model string (e.g., "ollama/mistral", "my-custom-model").
+    # - For "azure": It's the deployment name (e.g., "my-gpt4-deployment").
     base_model_name_from_config = agent_config.get("litellm_model_string")
     user_api_base_override = agent_config.get("litellm_api_base")
     user_api_key_override = agent_config.get("litellm_api_key")
 
     if not selected_provider_id:
-        logger.warn(f"Missing 'selectedProviderId' in agent config '{agent_config.get('name', 'N/A')}' {context_for_log}. Attempting to infer.")
+        # Attempt to infer, though frontend should always send this now.
+        logger.warn(f"Missing 'selectedProviderId' in agent config '{agent_config.get('name', 'N/A')}' {context_for_log}. This is unexpected. Attempting fallback inference.")
         if base_model_name_from_config:
             if "gpt" in base_model_name_from_config.lower(): selected_provider_id = "openai"
-            elif "gemini" in base_model_name_from_config.lower(): selected_provider_id = "gemini"
+            elif "gemini" in base_model_name_from_config.lower(): selected_provider_id = "google_ai_studio"
             elif "claude" in base_model_name_from_config.lower(): selected_provider_id = "anthropic"
-            elif "mixtral" in base_model_name_from_config.lower() or "llama" in base_model_name_from_config.lower() : selected_provider_id = "together_ai"
+            # Add more inference rules if necessary
         if not selected_provider_id :
-            selected_provider_id = "gemini"
-            base_model_name_from_config = base_model_name_from_config or "gemini-1.5-flash-latest"
-            logger.warn(f"Could not infer provider. Defaulting to '{selected_provider_id}' and model '{base_model_name_from_config}'.")
+            selected_provider_id = "custom" # Safest fallback if truly unknown
+            logger.warn(f"Could not infer provider. Defaulting to '{selected_provider_id}'. Model string '{base_model_name_from_config}' will be used as is.")
 
-    if not base_model_name_from_config:
-        if selected_provider_id == "openai": base_model_name_from_config = "gpt-3.5-turbo"
-        elif selected_provider_id == "gemini": base_model_name_from_config = "gemini-1.5-flash-latest"
-        elif selected_provider_id == "anthropic": base_model_name_from_config = "claude-3-haiku-20240307"
-        elif selected_provider_id == "together_ai": base_model_name_from_config = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-        else: base_model_name_from_config = "gemini-1.5-flash-latest" # Fallback default
-        logger.warn(f"Missing 'litellm_model_string'. Defaulting to '{base_model_name_from_config}' for provider '{selected_provider_id}'.")
+    if not base_model_name_from_config and selected_provider_id != "custom" and selected_provider_id != "openai_compatible":
+        # This should ideally not happen if frontend defaults correctly.
+        logger.warn(f"Missing 'litellm_model_string' for provider '{selected_provider_id}'. This may lead to errors.")
+        # Assign a very generic default or raise error, depending on strictness.
+        # For now, let it proceed, LiteLLM might have global defaults or raise error.
 
-    provider_constants = get_provider_constants_py(selected_provider_id)
-    if not provider_constants:
-        logger.error(f"Invalid 'selectedProviderId': {selected_provider_id}. Cannot determine API configuration.")
+    provider_backend_config = BACKEND_LITELLM_PROVIDER_CONFIG.get(selected_provider_id)
+    if not provider_backend_config:
+        logger.error(f"Invalid 'selectedProviderId': {selected_provider_id}. Cannot determine LiteLLM prefix or API key for agent '{adk_agent_name}'.")
         raise ValueError(f"Invalid provider ID: {selected_provider_id}")
 
-    final_api_base = None
-    if user_api_base_override and provider_constants.get("allowsCustomBase"):
-        final_api_base = user_api_base_override
-    elif provider_constants.get("apiBase"):
-        final_api_base = provider_constants.get("apiBase")
-
-    if selected_provider_id == "azure":
-        # For Azure, AZURE_API_BASE from env is primary unless user overrides.
-        final_api_base = os.getenv("AZURE_API_BASE")
-        if user_api_base_override: # User override takes precedence even for Azure
-            final_api_base = user_api_base_override
-        if not final_api_base :
-            logger.error("Azure provider: AZURE_API_BASE env var not set and not overridden by user. LiteLLM will likely fail.")
-
-    final_api_key = None
-    if user_api_key_override and provider_constants.get("allowsCustomKey"):
-        final_api_key = user_api_key_override
-    else:
-        api_key_env_var_name = provider_constants.get("requiresApiKeyInEnv")
-        if api_key_env_var_name:
-            final_api_key = os.getenv(api_key_env_var_name)
-            if not final_api_key:
-                logger.warn(f"API key env var '{api_key_env_var_name}' for provider '{selected_provider_id}' not set. LiteLLM may fail if key is required.")
-
-                # Determine the final model string for LiteLLM
+        # Construct the final model string for LiteLLM
     final_model_str_for_litellm = base_model_name_from_config
+    if provider_backend_config["prefix"]:
+        # Only prepend if it's not already prefixed (e.g., user entered "openai/gpt-4o" for custom type)
+        # and the base_model_name_from_config itself doesn't already contain a "/" which might indicate
+        # a user attempting to use a fully qualified name with a standard provider.
+        # Azure is special: prefix is "azure", model name is deployment name.
+        if selected_provider_id == "azure":
+            if not base_model_name_from_config.startswith("azure/"):
+                final_model_str_for_litellm = f"azure/{base_model_name_from_config}"
+        elif not base_model_name_from_config.startswith(provider_backend_config["prefix"] + "/"):
+            final_model_str_for_litellm = f"{provider_backend_config['prefix']}/{base_model_name_from_config}"
+            # For "custom" or "openai_compatible" (prefix: null or "openai"), final_model_str_for_litellm is used as is from base_model_name_from_config
 
-    if selected_provider_id == "custom":
-        # For custom provider, the user is expected to provide the full model string.
-        # No prefixing is done by default.
-        pass
-    elif selected_provider_id == "azure":
-        # Azure has its own prefixing convention, typically azure/<deployment_name>.
-        # The base_model_name_from_config for Azure should be the deployment name.
-        if not final_model_str_for_litellm.startswith("azure/"):
-            final_model_str_for_litellm = f"azure/{final_model_str_for_litellm}"
-    else:
-        # For other standard providers (openai, anthropic, together_ai, gemini, etc.)
-        lite_llm_prefix = provider_constants.get("liteLlmModelPrefix")
-        if lite_llm_prefix: # Check if a prefix is defined for this provider
-            # Prepend the prefix if the model string doesn't already start with "prefix/"
-            # This handles cases where base_model_name_from_config might be "gpt-3.5-turbo" or "meta-llama/Llama-3"
-            if not final_model_str_for_litellm.startswith(f"{lite_llm_prefix}/"):
-                final_model_str_for_litellm = f"{lite_llm_prefix}/{final_model_str_for_litellm}"
-                # If it already starts with the prefix, no change is needed.
-        else:
-            # This case might occur if a new provider is added to PYTHON_AGENT_CONSTANTS
-            # without a liteLlmModelPrefix, and it's not 'custom' or 'azure'.
-            logger.warn(
-                f"Provider '{selected_provider_id}' is not 'custom' or 'azure' but has no 'liteLlmModelPrefix' defined "
-                f"in PYTHON_AGENT_CONSTANTS. Using model string as is: '{base_model_name_from_config}'. "
-                f"This might lead to errors if LiteLLM expects a prefixed model string for this provider."
-            )
+    # Determine API Base
+    final_api_base = user_api_base_override # User override takes precedence
+
+    # Determine API Key
+    final_api_key = user_api_key_override # User override takes precedence
+    if not final_api_key and provider_backend_config["apiKeyEnv"]:
+        final_api_key = os.getenv(provider_backend_config["apiKeyEnv"])
+        if not final_api_key and provider_backend_config["apiKeyEnv"] not in ["AWS_ACCESS_KEY_ID", "WATSONX_APIKEY"]: # Bedrock/WatsonX have complex auth
+            logger.warn(f"API key env var '{provider_backend_config['apiKeyEnv']}' for provider '{selected_provider_id}' not set, and no override provided. LiteLLM may fail if key is required by the provider or its default configuration.")
+
+            # Special handling for Azure provider specific environment variables
+    if selected_provider_id == "azure":
+        if not os.getenv("AZURE_API_BASE") and not final_api_base:
+            logger.error("Azure provider selected, but AZURE_API_BASE is not set in environment and no API Base override provided. LiteLLM will likely fail.")
+        if not os.getenv("AZURE_API_VERSION"):
+            logger.warn("Azure provider selected, but AZURE_API_VERSION is not set in environment. LiteLLM may require it.")
+            # LiteLLM handles picking these up from env if api_base/api_key aren't passed to LiteLlm constructor
+
+    # Special handling for WatsonX
+    if selected_provider_id == "watsonx":
+        if not os.getenv("WATSONX_URL") and not final_api_base: # User can override WATSONX_URL via api_base
+            logger.error("WatsonX provider: WATSONX_URL env var not set and not overridden by user. LiteLLM will likely fail.")
+        if not os.getenv("WATSONX_PROJECT_ID") and not agent_config.get("project_id"): # project_id can be passed in agent_config
+            logger.warn("WatsonX provider: WATSONX_PROJECT_ID env var not set and no project_id in agent_config. LiteLLM may require it.")
+
 
     logger.info(f"Configuring LiteLlm for agent '{adk_agent_name}' (Provider: {selected_provider_id}): "
-                f"Model='{final_model_str_for_litellm}', API Base='{final_api_base or 'Default/Env'}', KeySet={'Yes' if final_api_key else 'No'}")
+                f"Model='{final_model_str_for_litellm}', API Base='{final_api_base or 'Default/Env'}', KeyIsSet={(not not final_api_key) or (selected_provider_id in ['bedrock', 'watsonx'])}") # Bedrock/WatsonX use SDK auth
 
-    if selected_provider_id == "azure" and not os.getenv("AZURE_API_VERSION"):
-        logger.warn("Azure provider: AZURE_API_VERSION env var not set. LiteLLM may require it.")
+    # Instantiate LiteLlm model for ADK
+    # For Bedrock and WatsonX, LiteLLM's SDK integration handles credentials if api_key is None.
+    # For Azure, LiteLLM picks up AZURE_API_BASE, AZURE_API_KEY, AZURE_API_VERSION from env if not passed.
+    model_constructor_kwargs = {"model": final_model_str_for_litellm}
+    if final_api_base:
+        model_constructor_kwargs["api_base"] = final_api_base
+    if final_api_key: # Only pass api_key if explicitly set or found from standard env var
+        model_constructor_kwargs["api_key"] = final_api_key
 
-    actual_model_for_adk = LiteLlm(
-        model=final_model_str_for_litellm,
-        api_base=final_api_base,
-        api_key=final_api_key
-    )
+        # For watsonx, pass project_id if available
+    if selected_provider_id == "watsonx":
+        project_id_for_watsonx = agent_config.get("project_id") or os.getenv("WATSONX_PROJECT_ID")
+        if project_id_for_watsonx:
+            model_constructor_kwargs["project_id"] = project_id_for_watsonx
+        else:
+            logger.warn(f"WatsonX project_id not found for agent {adk_agent_name}. This might be required.")
+            # Pass space_id for deployed models if applicable (not directly handled here, assumed in model string or context)
+        if base_model_name_from_config.startswith("deployment/"):
+            space_id_for_watsonx = agent_config.get("space_id") or os.getenv("WATSONX_DEPLOYMENT_SPACE_ID")
+            if space_id_for_watsonx:
+                model_constructor_kwargs["space_id"] = space_id_for_watsonx
+            else:
+                logger.warn(f"WatsonX deployment model used for {adk_agent_name} but space_id not found.")
+
+
+    actual_model_for_adk = LiteLlm(**model_constructor_kwargs)
+
 
     agent_kwargs = {
         "name": adk_agent_name,
@@ -180,17 +153,23 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         "instruction": agent_config.get("instruction"),
         "tools": instantiated_tools,
         "output_key": agent_config.get("outputKey"),
+        # ADK's LiteLlm model does not directly take enable_code_execution.
+        # If needed, it would be part of tools or specific model capabilities.
     }
 
-    model_settings = agent_config.get("modelSettings", {})
+    model_settings = agent_config.get("modelSettings", {}) # UI sends this, ADK's LiteLLM model might not use all
     current_generate_content_config_kwargs = {}
 
+    # Map common settings to LiteLLM compatible params if ADK's LiteLlm model accepts them
+    # Temperature and max_output_tokens are common. Top_p, top_k might need specific LiteLLM handling or pass-through.
     if "temperature" in model_settings and model_settings["temperature"] is not None:
-        try: current_generate_content_config_kwargs["temperature"] = float(model_settings["temperature"])
+        try: agent_kwargs["temperature"] = float(model_settings["temperature"]) # LiteLlm model might take this
         except (ValueError, TypeError): logger.warning(f"Invalid temperature: {model_settings['temperature']}")
     if "maxOutputTokens" in model_settings and model_settings["maxOutputTokens"] is not None:
-        try: current_generate_content_config_kwargs["max_output_tokens"] = int(model_settings["maxOutputTokens"])
+        try: agent_kwargs["max_tokens"] = int(model_settings["maxOutputTokens"]) # LiteLlm model might take this
         except (ValueError, TypeError): logger.warning(f"Invalid maxOutputTokens: {model_settings['maxOutputTokens']}")
+
+        # These are more Gemini-specific, LiteLLM might pass them through if the underlying provider supports.
     if "topP" in model_settings and model_settings["topP"] is not None:
         try: current_generate_content_config_kwargs["top_p"] = float(model_settings["topP"])
         except (ValueError, TypeError): logger.warning(f"Invalid topP: {model_settings['topP']}")
@@ -200,9 +179,17 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
     if "stopSequences" in model_settings and isinstance(model_settings["stopSequences"], list):
         current_generate_content_config_kwargs["stop_sequences"] = [str(seq) for seq in model_settings["stopSequences"]]
 
+        # If there are any Gemini-specific generation_config items, set them.
+    # Note: ADK's LiteLlm class might not directly use a GenerateContentConfig object.
+    # It's more likely to pass these as individual kwargs to litellm.completion.
+    # For now, we'll prepare them, but LiteLlm integration needs to handle them.
+    # The current ADK LiteLlm model seems to pass unknown kwargs to litellm.completion.
     if current_generate_content_config_kwargs:
-        agent_kwargs["generate_content_config"] = genai_types.GenerateContentConfig(**current_generate_content_config_kwargs)
-        logger.info(f"Agent '{adk_agent_name}' will use GenerateContentConfig: {agent_kwargs['generate_content_config']}")
+        # Instead of creating a GenerateContentConfig object, we'll merge these into agent_kwargs
+        # if the LiteLlm model in ADK passes them through to litellm.completion
+        agent_kwargs.update(current_generate_content_config_kwargs)
+        logger.info(f"Agent '{adk_agent_name}' has additional model parameters: {current_generate_content_config_kwargs}")
+
 
     return {k: v for k, v in agent_kwargs.items() if v is not None}
 
@@ -229,7 +216,7 @@ def instantiate_tool(tool_config):
     module_path = tool_config.get("module_path")
     class_name = tool_config.get("class_name")
 
-    if module_path and class_name:
+    if module_path and class_name: # This indicates a Gofannon or custom_repo tool
         try:
             module = importlib.import_module(module_path)
             ToolClass = getattr(module, class_name)
@@ -246,9 +233,9 @@ def instantiate_tool(tool_config):
                 tool_source_type = "Gofannon-compatible tool"
                 logger.info(f"Successfully instantiated and exported {tool_source_type} '{tool_config.get('id', class_name)}' to ADK spec.")
                 return adk_tool_spec
-            else:
-                logger.info(f"Successfully instantiated tool '{tool_config.get('id', class_name)}' (assumed ADK native or directly compatible, e.g., Langchain tool).")
-                return instance
+            else: # Assume it's a directly ADK-compatible tool object (e.g. Langchain Tool)
+                logger.info(f"Successfully instantiated tool '{tool_config.get('id', class_name)}' (assumed ADK native or directly compatible).")
+                return instance # Return the instance itself if no export_to_adk
         except Exception as e:
             tool_id_for_log = tool_config.get('id', class_name or 'N/A')
             if isinstance(e, (ImportError, ModuleNotFoundError)):
@@ -256,17 +243,29 @@ def instantiate_tool(tool_config):
             else:
                 logger.error(f"Error instantiating tool '{tool_id_for_log}': {e}\n{traceback.format_exc()}")
             raise ValueError(f"Error instantiating tool {tool_id_for_log}: {e}")
-    else:
+    else: # Handle ADK built-in tools or potentially other structures
         tool_id = tool_config.get("id")
-        tool_type = tool_config.get("type")
+        tool_type = tool_config.get("type") # This 'type' is from our UI's tool structure
         if tool_id == 'google_search_adk' and tool_type == 'adk_builtin_search':
             logger.info(f"Recognized ADK built-in Google Search tool config: {tool_id}")
-            return "google_search"
+            return "google_search" # ADK expects this string for its built-in tool
         elif tool_id == 'vertex_ai_search_adk' and tool_type == 'adk_builtin_vertex_search':
             logger.info(f"Recognized ADK built-in Vertex AI Search tool config: {tool_id}")
+            # For Vertex AI Search, ADK might expect "vertex_ai_search" or a Tool object.
+            # Refer to ADK documentation for exact requirement. Assuming "vertex_ai_search" string for now.
+            # Configuration for datastore_id etc. would need to be handled, possibly by AgentTool.from_vertex_ai_search(...)
+            # This part needs confirmation from ADK's way of enabling its built-in Vertex AI Search tool.
+            # If it needs specific parameters, the tool_config should carry them.
+            # For now, returning the string identifier.
+            # Example: return AgentTool.from_vertex_ai_search(datastore_id="YOUR_DATASTORE_ID") -> if configuration is supported.
+            # If no config needed here by ADK, string is fine.
+            logger.warn("Vertex AI Search tool selected - datastore configuration is not yet supported in this UI for ADK. ADK might use a default or require env setup.")
             return "vertex_ai_search"
         else:
-            raise ValueError(f"Unsupported or incomplete tool configuration for tool ID {tool_config.get('id', 'N/A')}. Missing module_path/class_name or not a recognized built-in.")
+            # This could be a scenario where the tool_config represents an already fully formed ADK tool object
+            # (e.g., from a JSON serialization of an AgentTool). This is less likely with current UI.
+            # Or it's an unrecognized configuration.
+            raise ValueError(f"Unsupported or incomplete tool configuration for tool ID '{tool_config.get('id', 'N/A')}' (type: {tool_type}). Missing Gofannon module_path/class_name or not a recognized ADK built-in type.")
 
 
 def sanitize_adk_agent_name(name_str: str, prefix_if_needed: str = "agent_") -> str:
@@ -325,15 +324,22 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
 
     elif AgentClass == SequentialAgent or AgentClass == ParallelAgent:
         child_agent_configs = agent_config.get("childAgents", [])
-        if not child_agent_configs: # Allow empty for these types if needed
+        if not child_agent_configs:
             logger.info(f"{AgentClass.__name__} '{original_agent_name}' has no child agents configured.")
             instantiated_child_agents = []
         else:
             instantiated_child_agents = []
             for idx, child_config in enumerate(child_agent_configs):
                 try:
-                    if 'selectedProviderId' not in child_config and 'litellm_model_string' not in child_config :
-                        logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing model info. Defaulting in recursive call.")
+                    # Ensure child_config has necessary fields or default them
+                    if 'selectedProviderId' not in child_config:
+                        logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'selectedProviderId'. Defaulting.")
+                        child_config['selectedProviderId'] = BACKEND_LITELLM_PROVIDER_CONFIG.get("openai") # Example default
+                    if 'litellm_model_string' not in child_config:
+                        logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'litellm_model_string'. Defaulting.")
+                        # Add intelligent defaulting for model_string based on child_config['selectedProviderId'] if possible
+                        child_config['litellm_model_string'] = "gpt-3.5-turbo" # Example default
+
                     child_agent_instance = instantiate_adk_agent_from_config(
                         child_config,
                         parent_adk_name_for_context=adk_agent_name,
@@ -357,7 +363,7 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
         looped_agent_adk_name = sanitize_adk_agent_name(f"{adk_agent_name}_looped_child_instance", prefix_if_needed="looped_")
 
         looped_agent_kwargs = _prepare_agent_kwargs_from_config(
-            agent_config, # LoopAgent uses its own config for the looped child
+            agent_config,
             looped_agent_adk_name,
             context_for_log=f"(looped child of LoopAgent '{adk_agent_name}', original config: '{looped_agent_config_name}')"
         )
@@ -371,7 +377,7 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
             logger.error(f"Traceback:\n{detailed_traceback}")
             raise ValueError(f"Failed to instantiate looped child agent for '{original_agent_name}': {e_loop_child_init}.")
 
-        max_loops_val_str = agent_config.get("maxLoops", "3") # Get as string first
+        max_loops_val_str = agent_config.get("maxLoops", "3")
         try:
             max_loops_val = int(max_loops_val_str)
             if max_loops_val <= 0:

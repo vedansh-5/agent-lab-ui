@@ -13,7 +13,7 @@ from common.utils import initialize_vertex_ai # For vertexai.init
 from common.adk_helpers import (
     generate_vertex_deployment_display_name,
     instantiate_adk_agent_from_config,
-    PYTHON_AGENT_CONSTANTS # Import this
+    BACKEND_LITELLM_PROVIDER_CONFIG # Import the correct config
 )
 
 def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
@@ -61,21 +61,18 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=error_msg)
 
     requirements_list = [
-        "google-cloud-aiplatform[adk,agent_engines]>=1.93.1", # Ensure correct ADK version for Agent Engine
-        "gofannon", # If used
-        "litellm>=1.72.0" # Ensure LiteLLM is present
+        "google-cloud-aiplatform[adk,agent_engines]>=1.93.1",
+        "gofannon",
+        "litellm>=1.72.0" # Updated based on previous change
     ]
-    # Add custom tool repo URLs from agent_config_data.get("usedCustomRepoUrls", []) as before...
     custom_repo_urls = agent_config_data.get("usedCustomRepoUrls", [])
     if isinstance(custom_repo_urls, list):
         for repo_url_original in custom_repo_urls:
             if isinstance(repo_url_original, str) and repo_url_original.strip():
-                # ... (Your existing logic for formatting repo_url_for_pip and adding to requirements_list)
-                # This part of your code seemed mostly fine.
                 repo_url_raw = repo_url_original.strip()
 
                 if not (repo_url_raw.startswith("https://") or repo_url_raw.startswith("http://") or \
-                        repo_url_raw.startswith("git@") or repo_url_raw.startswith("git+")): # Allow common git URL starts
+                        repo_url_raw.startswith("git@") or repo_url_raw.startswith("git+")):
                     logger.warning(f"Skipping custom repository URL with unrecognized scheme: {repo_url_raw}")
                     continue
 
@@ -115,7 +112,7 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
                 sanitized_egg_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', parsed_egg_name)
 
                 current_egg_name_for_fragment = sanitized_egg_name
-                if not is_commit_hash_ref: # Add timestamp extra if not a commit hash
+                if not is_commit_hash_ref:
                     timestamp_val = int(time.time())
                     current_egg_name_for_fragment += f"[upd{timestamp_val}]"
 
@@ -133,31 +130,32 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
 
     deployment_display_name = generate_vertex_deployment_display_name(original_config_name, agent_doc_id)
 
-    # --- Collect Environment Variables for Vertex AI Agent Engine ---
     vertex_env_vars = {}
-    # Standard ADK/Google vars
-    project_id_for_vertex, location_for_vertex, _ = get_gcp_project_config()
-    if project_id_for_vertex: vertex_env_vars["GOOGLE_CLOUD_PROJECT"] = project_id_for_vertex
-    if location_for_vertex: vertex_env_vars["GOOGLE_CLOUD_LOCATION"] = location_for_vertex
-    if "GOOGLE_GENAI_USE_VERTEXAI" in os.environ: # Propagate if set in function env
-        vertex_env_vars["GOOGLE_GENAI_USE_VERTEXAI"] = os.environ["GOOGLE_GENAI_USE_VERTEXAI"]
+    # project_id_for_vertex, location_for_vertex, _ = get_gcp_project_config()
+    # if project_id_for_vertex: vertex_env_vars["GOOGLE_CLOUD_PROJECT"] = project_id_for_vertex
+    # if location_for_vertex: vertex_env_vars["GOOGLE_CLOUD_LOCATION"] = location_for_vertex
+    # if "GOOGLE_GENAI_USE_VERTEXAI" in os.environ:
+    #     vertex_env_vars["GOOGLE_GENAI_USE_VERTEXAI"] = os.environ["GOOGLE_GENAI_USE_VERTEXAI"]
 
-        # LiteLLM Provider API Keys & Azure Specific Vars
-    # These need to be present in the Firebase Function's environment to be passed to Vertex.
-    # The UI should ensure users are aware of this, or allow specifying them at deployment time
-    # which would then be securely passed to this function.
-    for provider_id, consts in PYTHON_AGENT_CONSTANTS.items():
-        env_key_name = consts.get("requiresApiKeyInEnv")
+        # Use BACKEND_LITELLM_PROVIDER_CONFIG to set API key env vars
+    for provider_id, config_details in BACKEND_LITELLM_PROVIDER_CONFIG.items():
+        env_key_name = config_details.get("apiKeyEnv")
         if env_key_name and os.getenv(env_key_name):
             vertex_env_vars[env_key_name] = os.getenv(env_key_name)
-            logger.info(f"Adding env var '{env_key_name}' for Vertex AI deployment from function's environment.")
+            logger.info(f"Adding env var '{env_key_name}' for Vertex AI deployment from function's environment (Provider: {provider_id}).")
 
-        if provider_id == "azure": # Azure specific environment variables for LiteLLM
+        if provider_id == "azure":
             for azure_env_key in ["AZURE_API_BASE", "AZURE_API_VERSION"]:
                 if os.getenv(azure_env_key):
                     vertex_env_vars[azure_env_key] = os.getenv(azure_env_key)
-                    logger.info(f"Adding Azure env var '{azure_env_key}' for Vertex AI deployment from function's environment.")
-                    # Add any other critical environment variables needed by your tools or LiteLLM providers
+                    logger.info(f"Adding Azure env var '{azure_env_key}' for Vertex AI deployment.")
+
+        if provider_id == "watsonx":
+            for watsonx_env_key in ["WATSONX_URL", "WATSONX_PROJECT_ID", "WATSONX_DEPLOYMENT_SPACE_ID", "WATSONX_ZENAPIKEY"]: # Added ZENAPIKEY
+                if os.getenv(watsonx_env_key):
+                    vertex_env_vars[watsonx_env_key] = os.getenv(watsonx_env_key)
+                    logger.info(f"Adding WatsonX env var '{watsonx_env_key}' for Vertex AI deployment.")
+
 
     logger.info(f"Attempting to deploy ADK agent '{adk_agent.name}' to Vertex AI with display_name: '{deployment_display_name}'. Requirements: {requirements_list}. Environment Variables for Vertex: {list(vertex_env_vars.keys())}")
 
@@ -168,6 +166,10 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
             display_name=deployment_display_name,
             description=agent_config_data.get("description", f"ADK Agent: {deployment_display_name}"),
 
+            # Pass environment variables to the Vertex AI Agent Engine
+            # Ensure this matches the parameter name in ADK's `create` method if it's not `environment_variables`
+            # As of ADK 1.0.0, `environment_variables` is the correct parameter.
+            # env_vars=vertex_env_vars #hack
         )
         logger.info(f"Vertex AI agent deployment successful for '{agent_doc_id}'. Resource: {remote_app.resource_name}")
         db.collection("agents").document(agent_doc_id).update({
@@ -176,7 +178,6 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
         })
         return {"success": True, "resourceName": remote_app.resource_name, "message": f"Agent '{deployment_display_name}' deployment initiated."}
     except Exception as e_deploy:
-        # ... (your existing error handling for deployment failure) ...
         tb_str = traceback.format_exc()
         error_message_for_log = f"Error during Vertex AI agent deployment for '{agent_doc_id}' (ADK name: '{getattr(adk_agent, 'name', 'N/A')}', Display: '{deployment_display_name}'): {str(e_deploy)}"
         logger.error(f"{error_message_for_log}\nFull Traceback:\n{tb_str}")
@@ -191,7 +192,7 @@ def _deploy_agent_to_vertex_logic(req: https_fn.CallableRequest):
         db.collection("agents").document(agent_doc_id).update({
             "deploymentStatus": "error",
             "deploymentError": firestore_error_message,
-            "lastDeployedAt": firestore.SERVER_TIMESTAMP
+            "lastDeployedAt": firestore.SERVER_TIMESTAMP # Using lastDeployedAt to signify when the error occurred
         })
 
         if isinstance(e_deploy, https_fn.HttpsError): raise
