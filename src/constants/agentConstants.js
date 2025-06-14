@@ -146,7 +146,7 @@ export const MODEL_PROVIDERS_LITELLM = [
         liteLlmModelPrefix: "deepinfra", // e.g. deepinfra/meta-llama/Llama-2-70b-chat-hf
         models: [
             // Model IDs are provider-org/model-name
-            { id: "meta-llama/Meta-Llama-3-8B-Instruct", name: "Llama 3 8B Instruct (DeepInfra)" },
+            { id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", name: "Llama 3.3 70B Instruct Turbo (DeepInfra)" },
             { id: "meta-llama/Meta-Llama-3-70B-Instruct", name: "Llama 3 70B Instruct (DeepInfra)" },
             { id: "mistralai/Mistral-7B-Instruct-v0.1", name: "Mistral 7B Instruct (DeepInfra)" },
         ],
