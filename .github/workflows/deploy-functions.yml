@@ -44,6 +44,11 @@ jobs:
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI }}
 
+      - name: Configure Google ADC  
+        run: |  
+          mkdir -p ~/.config/gcloud  
+          cp "${{ steps.auth.outputs.credentials_file_path }}" ~/.config/gcloud/application_default_credentials.json 
+
       - name: Prepare Python Env
         working-directory: ./functions
         run: |
