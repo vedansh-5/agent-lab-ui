@@ -62,7 +62,7 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
         run: |
           echo "Deploying Functions to project: ${{ env.PROJECT_ID }}"
-          firebase deploy --only functions --project ${{ env.PROJECT_ID }} --force --source ./functions
+          firebase deploy --only functions --project ${{ env.PROJECT_ID }} ./functions
 
       - name: Clean up config file
         if: always()
