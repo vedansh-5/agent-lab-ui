@@ -196,7 +196,7 @@ async def _query_async_logic_internal(resource_name, message_text, adk_user_id, 
         # Store original environment variables that might be relevant to LiteLLM or ADK
         original_env_vars = {
             key: os.environ.get(key) for key in [
-                "GOOGLE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", # Common LiteLLM keys
+                "GOOGLE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "TOGETHER_API_KEY"# Common LiteLLM keys
                 "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION" # For some LiteLLM Vertex integrations
             ]
         }

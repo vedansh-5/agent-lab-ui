@@ -8,7 +8,7 @@ import {
     AGENT_TYPES,
     MODEL_PROVIDERS_LITELLM,
     DEFAULT_LITELLM_PROVIDER_ID,
-    DEFAULT_LITELLM_BASE_MODEL_ID, // This is now the full model string for default
+    DEFAULT_LITELLM_BASE_MODEL_ID,
     getLiteLLMProviderConfig
 } from '../../constants/agentConstants';
 import { v4 as uuidv4 } from 'uuid';
@@ -16,7 +16,7 @@ import {
     TextField, Button, Select, MenuItem, FormControl, InputLabel,
     Paper, Grid, Box, CircularProgress, Typography, IconButton, List,
     ListItem, ListItemText, ListItemSecondaryAction, FormHelperText,
-    Checkbox, FormControlLabel, Divider, Stack
+    Checkbox, FormControlLabel, Divider, Stack, Alert
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
@@ -52,15 +52,17 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [agentType, setAgentType] = useState(initialData.agentType || AGENT_TYPES[0]);
 
     // Model Selection State
-    // selectedBaseModelId stores the full LiteLLM model string (e.g., "gpt-4o", "gemini/gemini-1.5-flash-latest")
     const [selectedProviderId, setSelectedProviderId] = useState(initialData.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID);
-    const [selectedBaseModelId, setSelectedBaseModelId] = useState(initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID);
+    const [selectedBaseModelId, setSelectedBaseModelId] = useState(initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID); // Stores base model name like "gpt-4o"
 
-    // litellmModelString state is now primarily for the "custom" provider scenario or when user types directly
-    // For other providers, it will mirror selectedBaseModelId.
-    const [litellmModelString, setLitellmModelString] = useState(initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID);
+    // This is what the user types for "custom" provider, or derived for others.
+    // For non-custom, it's the base model ID (e.g. "gpt-4o").
+    // For custom, it's the full LiteLLM string (e.g. "ollama/mistral").
+    const [inputtedModelString, setInputtedModelString] = useState(initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID);
+
     const [litellmApiBase, setLitellmApiBase] = useState(initialData.litellm_api_base || '');
     const [litellmApiKey, setLitellmApiKey] = useState(initialData.litellm_api_key || '');
+
 
     const [instruction, setInstruction] = useState(initialData.instruction || '');
     const [selectedTools, setSelectedTools] = useState(initialData.tools || []);
@@ -83,11 +85,11 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [formError, setFormError] = useState('');
     const [nameError, setNameError] = useState('');
 
-    const initialDataProcessedRef = useRef(false); // To prevent re-processing initialData on every render
+    const initialDataProcessedRef = useRef(false);
 
     // Derived state for UI
     const currentProviderConfig = getLiteLLMProviderConfig(selectedProviderId);
-    const availableBaseModels = currentProviderConfig?.models || []; // These are { id: "liteLLM_model_string", name: "Display Name" }
+    const availableBaseModels = currentProviderConfig?.models || [];
 
     // Effect for initializing form state from initialData
     useEffect(() => {
@@ -97,33 +99,48 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             setAgentType(initialData.agentType || AGENT_TYPES[0]);
 
             let initialSelectedProvider = initialData.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID;
-            let initialModelString = initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID;
+            let initialBaseModelName = initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID; // This is the base model name part
 
-            // If selectedProviderId is missing in initialData, try to infer it
+            // Infer provider if not set, and derive base model name if a prefix exists
             if (!initialData.selectedProviderId && initialData.litellm_model_string) {
-                const foundProviderByPrefix = MODEL_PROVIDERS_LITELLM.find(
-                    p => p.prefix && initialData.litellm_model_string.startsWith(p.prefix)
+                const fullModelStr = initialData.litellm_model_string;
+                let foundProvider = MODEL_PROVIDERS_LITELLM.find(
+                    p => p.liteLlmModelPrefix && fullModelStr.startsWith(p.liteLlmModelPrefix + "/")
                 );
-                if (foundProviderByPrefix) {
-                    initialSelectedProvider = foundProviderByPrefix.id;
-                } else if (!MODEL_PROVIDERS_LITELLM.some(p => p.id === initialSelectedProvider)) {
-                    initialSelectedProvider = 'custom'; // Fallback to custom
+
+                if (foundProvider) {
+                    initialSelectedProvider = foundProvider.id;
+                    initialBaseModelName = fullModelStr.substring(foundProvider.liteLlmModelPrefix.length + 1);
+                } else {
+                    // Could be a custom model string without a known prefix, or azure, or openai_compatible without explicit prefix
+                    // If it's azure/..., it's Azure provider.
+                    if (fullModelStr.startsWith("azure/")) {
+                        foundProvider = getLiteLLMProviderConfig("azure");
+                        initialSelectedProvider = "azure";
+                        initialBaseModelName = fullModelStr.substring("azure/".length);
+                    }
+                    // If no known prefix, and not explicitly "custom", check if it looks like openai_compatible
+                    else if (initialSelectedProvider !== "custom" && !MODEL_PROVIDERS_LITELLM.some(p => p.id === initialSelectedProvider)) {
+                        // This logic might need refinement if `initialData.selectedProviderId` can be something like "openai_compatible"
+                        initialSelectedProvider = 'custom'; // Default to custom if no prefix matches
+                        initialBaseModelName = fullModelStr; // For custom, base model is the full string
+                    }
                 }
             }
             setSelectedProviderId(initialSelectedProvider);
 
             const providerConf = getLiteLLMProviderConfig(initialSelectedProvider);
-            if (providerConf?.id !== 'custom' && providerConf?.models.some(m => m.id === initialModelString)) {
-                setSelectedBaseModelId(initialModelString);
-            } else if (providerConf?.id === 'custom') {
-                setSelectedBaseModelId(''); // No specific base model for custom
+            if (providerConf?.id === 'custom' || providerConf?.id === 'openai_compatible') {
+                setSelectedBaseModelId(''); // No specific "base model" dropdown for these
+                setInputtedModelString(initialBaseModelName); // This is the full string
+            } else if (providerConf?.models.some(m => m.id === initialBaseModelName)) {
+                setSelectedBaseModelId(initialBaseModelName);
+                setInputtedModelString(initialBaseModelName);
             } else {
-                // If model string not in provider's list, or provider has no models
-                const firstModelOfProvider = providerConf?.models[0]?.id;
-                setSelectedBaseModelId(firstModelOfProvider || '');
-                initialModelString = firstModelOfProvider || (initialSelectedProvider === 'custom' ? initialModelString : '');
+                const firstModelOfProvider = providerConf?.models[0]?.id || '';
+                setSelectedBaseModelId(firstModelOfProvider);
+                setInputtedModelString(firstModelOfProvider);
             }
-            setLitellmModelString(initialModelString);
 
             setLitellmApiBase(initialData.litellm_api_base || '');
             setLitellmApiKey(initialData.litellm_api_key || '');
@@ -142,42 +159,55 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             setChildAgents((initialData.childAgents || []).map(ca => ({ ...ca, id: ca.id || uuidv4() })));
             setFormError('');
             setNameError('');
-            initialDataProcessedRef.current = true; // Mark as processed
+            initialDataProcessedRef.current = true;
         }
     }, [initialData]);
 
     // Effect for handling selectedProviderId change
     useEffect(() => {
+        // Don't run this effect if initialData hasn't been processed yet, to avoid premature reset
+        if (!initialDataProcessedRef.current && Object.keys(initialData).length > 0) return;
+
         const providerConf = getLiteLLMProviderConfig(selectedProviderId);
         if (providerConf) {
-            if (selectedProviderId === 'custom') {
-                setSelectedBaseModelId(''); // Clear base model selection
-                // Keep litellmModelString as is, or set from initialData if it was custom
-                if (initialData?.selectedProviderId === 'custom') {
-                    setLitellmModelString(initialData.litellm_model_string || '');
-                } else if (initialDataProcessedRef.current) { // Only clear if not initial load and was not custom
-                    setLitellmModelString('');
+            if (providerConf.id === 'custom' || providerConf.id === 'openai_compatible') {
+                setSelectedBaseModelId(''); // Clear base model dropdown selection
+                // For 'custom'/'openai_compatible', allow user to type the model string
+                // If switching from a non-custom provider, clear inputtedModelString,
+                // otherwise preserve it (e.g. if initialData was custom)
+                if (initialData?.selectedProviderId !== 'custom' && initialData?.selectedProviderId !== 'openai_compatible') {
+                    setInputtedModelString('');
+                } else {
+                    setInputtedModelString(initialData.litellm_model_string || '');
                 }
+
             } else if (providerConf.models && providerConf.models.length > 0) {
-                // If current selectedBaseModelId is not valid for new provider, default to first model
+                // Default to the first model of the new provider if current selection isn't valid for it
                 const firstModelId = providerConf.models[0].id;
-                const currentBaseIsValid = providerConf.models.some(m => m.id === selectedBaseModelId);
-                const newBaseModel = currentBaseIsValid ? selectedBaseModelId : firstModelId;
+                const currentBaseIsValidForNewProvider = providerConf.models.some(m => m.id === selectedBaseModelId);
+
+                const newBaseModel = currentBaseIsValidForNewProvider ? selectedBaseModelId : firstModelId;
                 setSelectedBaseModelId(newBaseModel);
-                setLitellmModelString(newBaseModel);
-            } else { // Provider with no predefined models
+                setInputtedModelString(newBaseModel); // Update inputtedModelString to reflect new base model
+            } else { // Provider with no predefined models (should not happen for non-custom)
                 setSelectedBaseModelId('');
-                setLitellmModelString('');
+                setInputtedModelString('');
             }
+            // Reset API base/key if provider doesn't allow custom, or set to provider default if exists
+            setLitellmApiBase(providerConf.allowsCustomBase ? (litellmApiBase || '') : (providerConf.apiBase || ''));
+            setLitellmApiKey(''); // API key generally should be cleared or re-evaluated
         }
-    }, [selectedProviderId, initialData,  selectedBaseModelId]); // initialData to re-evaluate if it changes.
+    }, [selectedProviderId, initialData, litellmApiBase, selectedBaseModelId]);
 
     // Effect for handling selectedBaseModelId change (for non-custom providers)
     useEffect(() => {
-        if (selectedProviderId !== 'custom' && selectedBaseModelId) {
-            setLitellmModelString(selectedBaseModelId);
+        // Don't run this effect if initialData hasn't been processed yet
+        if (!initialDataProcessedRef.current && Object.keys(initialData).length > 0) return;
+
+        if (selectedProviderId !== 'custom' && selectedProviderId !== 'openai_compatible' && selectedBaseModelId) {
+            setInputtedModelString(selectedBaseModelId); // Update the display/input field
         }
-    }, [selectedBaseModelId, selectedProviderId]);
+    }, [selectedBaseModelId, selectedProviderId, initialData]);
 
 
     const handleCodeExecutionChange = (event) => {
@@ -252,14 +282,14 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         }
 
         let finalModelStringForSubmit;
-        if (selectedProviderId === 'custom') {
-            finalModelStringForSubmit = litellmModelString.trim();
+        if (selectedProviderId === 'custom' || selectedProviderId === 'openai_compatible') {
+            finalModelStringForSubmit = inputtedModelString.trim();
         } else {
-            finalModelStringForSubmit = selectedBaseModelId; // This is the full model ID
+            finalModelStringForSubmit = selectedBaseModelId; // This is the base model name like "gpt-4o"
         }
 
-        if (!finalModelStringForSubmit) {
-            setFormError('LiteLLM Model String is required.');
+        if (!finalModelStringForSubmit && (agentType === 'Agent' || agentType === 'LoopAgent') ) {
+            setFormError('Model String is required.');
             return;
         }
 
@@ -270,10 +300,20 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             enableCodeExecution,
             usedCustomRepoUrls: enableCodeExecution ? [] : usedCustomRepoUrls,
 
-            selectedProviderId: selectedProviderId,
-            litellm_model_string: finalModelStringForSubmit,
-            litellm_api_base: (currentProviderConfig?.allowsCustomBase && litellmApiBase.trim()) ? litellmApiBase.trim() : null,
-            litellm_api_key: (currentProviderConfig?.allowsCustomKey && litellmApiKey.trim()) ? litellmApiKey.trim() : null,
+            selectedProviderId: selectedProviderId, // This is the key for backend logic
+            litellm_model_string: finalModelStringForSubmit, // This is base for standard, full for custom/oai-compat
+
+            // API Base: Use user input if provider allows custom and input is non-empty, otherwise use provider default (which can be null).
+            // If provider.apiBase is null (like for 'custom' or 'azure'), user input is critical.
+            litellm_api_base: (currentProviderConfig?.allowsCustomBase && litellmApiBase.trim())
+                ? litellmApiBase.trim()
+                : (currentProviderConfig?.apiBase || null), // Default to provider's base or null if none
+
+            // API Key: Use user input if provider allows custom and input is non-empty.
+            // Backend will check env var based on selectedProviderId if this is null.
+            litellm_api_key: (currentProviderConfig?.allowsCustomKey && litellmApiKey.trim())
+                ? litellmApiKey.trim()
+                : null,
         };
 
         const trimmedOutputKey = outputKey.trim();
@@ -287,30 +327,40 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         if (agentType === 'SequentialAgent' || agentType === 'ParallelAgent') {
             agentDataToSubmit.childAgents = childAgents.map(ca => {
                 const { id, ...restOfConfig } = ca; // Remove client-side id
-                // Ensure children also have selectedProviderId and a valid model string
-                if (!restOfConfig.selectedProviderId) {
-                    restOfConfig.selectedProviderId = DEFAULT_LITELLM_PROVIDER_ID;
+
+                let childFinalModelString;
+                if (ca.selectedProviderId === 'custom' || ca.selectedProviderId === 'openai_compatible') {
+                    childFinalModelString = ca.litellm_model_string; // Assume this is already the full/correct string
+                } else {
+                    childFinalModelString = ca.litellm_model_string; // This should be the base model name from child form
                 }
-                if (!restOfConfig.litellm_model_string) {
-                    const childProvConf = getLiteLLMProviderConfig(restOfConfig.selectedProviderId);
-                    restOfConfig.litellm_model_string = childProvConf?.models[0]?.id || DEFAULT_LITELLM_BASE_MODEL_ID;
-                }
-                return restOfConfig;
+
+                return {
+                    ...restOfConfig,
+                    selectedProviderId: ca.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID,
+                    litellm_model_string: childFinalModelString || DEFAULT_LITELLM_BASE_MODEL_ID
+                };
             });
         }
+
 
         if (initialData && initialData.platform) {
             agentDataToSubmit.platform = initialData.platform;
         }
 
-        const adkReadyTools = agentDataToSubmit.tools.map(tool => {
-            const { sourceRepoUrl, type, ...adkToolProps } = tool;
-            return adkToolProps;
+        // Transform tools for ADK: remove sourceRepoUrl and type from Gofannon/custom tools
+        const adkReadyTools = (agentDataToSubmit.tools || []).map(tool => {
+            if (tool.type === 'gofannon' || tool.type === 'custom_repo') {
+                const { sourceRepoUrl, type, ...adkToolProps } = tool;
+                return adkToolProps;
+            }
+            return tool; // For ADK built-in tools, return as-is
         });
         agentDataToSubmit.tools = adkReadyTools;
 
         onSubmit(agentDataToSubmit);
     };
+
 
     const handleOpenChildFormForNew = () => {
         setEditingChild(null);
@@ -338,19 +388,27 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     };
 
     const handleExistingAgentSelected = (selectedAgentFullConfig) => {
-        // Ensure the selected existing agent has the new fields, or default them
         const newChildAgent = {
             ...selectedAgentFullConfig,
-            id: uuidv4(),
-            agentType: selectedAgentFullConfig.agentType || AGENT_TYPES[0],
+            id: uuidv4(), // Assign new client-side ID
+            // Ensure all necessary fields from AgentForm are present or defaulted for the child
+            agentType: selectedAgentFullConfig.agentType || AGENT_TYPES[0], // Default if missing
             selectedProviderId: selectedAgentFullConfig.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID,
+            // litellm_model_string here is the base model string or full custom string
             litellm_model_string: selectedAgentFullConfig.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID,
             litellm_api_base: selectedAgentFullConfig.litellm_api_base || null,
             litellm_api_key: selectedAgentFullConfig.litellm_api_key || null,
+            instruction: selectedAgentFullConfig.instruction || '',
+            tools: selectedAgentFullConfig.tools || [],
+            enableCodeExecution: selectedAgentFullConfig.enableCodeExecution || false,
+            usedCustomRepoUrls: selectedAgentFullConfig.usedCustomRepoUrls || [],
+            outputKey: selectedAgentFullConfig.outputKey || '',
+            maxLoops: selectedAgentFullConfig.maxLoops || 3,
         };
         setChildAgents(prev => [...prev, newChildAgent]);
         setIsExistingAgentSelectorOpen(false);
     };
+
 
     const handleSaveChildAgent = (childDataFromForm) => {
         if (editingChild && editingChild.id) {
@@ -395,7 +453,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
 
                     {showParentConfig && (
                         <>
-                            <Grid item xs={12} sm={6}>
+                            <Grid item xs={12}>
                                 <FormControl fullWidth variant="outlined">
                                     <InputLabel id="modelProvider-label">LLM Provider (via LiteLLM)</InputLabel>
                                     <Select
@@ -408,16 +466,19 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                             <MenuItem key={provider.id} value={provider.id}>{provider.name}</MenuItem>
                                         ))}
                                     </Select>
+                                    {currentProviderConfig?.customInstruction && (
+                                        <Alert severity="info" sx={{mt:1, fontSize:'0.8rem'}}>{currentProviderConfig.customInstruction}</Alert>
+                                    )}
                                 </FormControl>
                             </Grid>
 
-                            {selectedProviderId !== 'custom' && availableBaseModels.length > 0 && (
-                                <Grid item xs={12} sm={6}>
+                            {selectedProviderId !== 'custom' && selectedProviderId !== 'openai_compatible' && availableBaseModels.length > 0 && (
+                                <Grid item xs={12}>
                                     <FormControl fullWidth variant="outlined">
                                         <InputLabel id="baseModel-label">Base Model</InputLabel>
                                         <Select
                                             labelId="baseModel-label"
-                                            value={selectedBaseModelId} // This is the full model string (e.g., "gpt-4o")
+                                            value={selectedBaseModelId}
                                             onChange={(e) => setSelectedBaseModelId(e.target.value)}
                                             label="Base Model"
                                         >
@@ -428,26 +489,25 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                     </FormControl>
                                 </Grid>
                             )}
-                            <Grid item xs={12}>
-                                <TextField
-                                    label="LiteLLM Model String"
-                                    id="litellmModelString"
-                                    value={litellmModelString} // Display current model string
-                                    onChange={(e) => {
-                                        if (selectedProviderId === 'custom') { // Only allow direct edit if custom
-                                            setLitellmModelString(e.target.value);
+                            {(selectedProviderId === 'custom' || selectedProviderId === 'openai_compatible' || (currentProviderConfig && availableBaseModels.length === 0)) && (
+                                <Grid item xs={12}>
+                                    <TextField
+                                        label="Model String"
+                                        id="inputtedModelString"
+                                        value={inputtedModelString}
+                                        onChange={(e) => setInputtedModelString(e.target.value)}
+                                        fullWidth variant="outlined" required
+                                        helperText={
+                                            currentProviderConfig?.id === 'custom'
+                                                ? "Enter the full LiteLLM model string (e.g., 'ollama/mistral', 'groq/mixtral-8x7b-32768')."
+                                                : currentProviderConfig?.id === 'openai_compatible'
+                                                    ? "Enter the model name expected by your OpenAI-compatible endpoint."
+                                                    : `No predefined models for ${currentProviderConfig?.name}. Enter model string.`
                                         }
-                                    }}
-                                    fullWidth variant="outlined" required
-                                    disabled={selectedProviderId !== 'custom'} // Disabled if not custom, as it's derived
-                                    helperText={
-                                        selectedProviderId === 'custom'
-                                            ? 'Full model string as LiteLLM expects it (e.g., "ollama/mistral", "groq/mixtral-8x7b-32768").'
-                                            : `Selected model: ${litellmModelString || "N/A"}. Change via dropdowns.`
-                                    }
-                                    error={formError.includes('LiteLLM Model String')}
-                                />
-                            </Grid>
+                                        error={formError.includes('Model String')}
+                                    />
+                                </Grid>
+                            )}
 
 
                             {currentProviderConfig?.allowsCustomBase && (
@@ -458,8 +518,12 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                         value={litellmApiBase}
                                         onChange={(e) => setLitellmApiBase(e.target.value)}
                                         fullWidth variant="outlined"
-                                        placeholder={`Default: ${currentProviderConfig?.apiBase || 'Not set for this provider'}`}
-                                        helperText="Overrides provider default. Only if this provider allows it."
+                                        placeholder={currentProviderConfig?.apiBase || (currentProviderConfig?.id === 'custom' || currentProviderConfig?.id === 'openai_compatible' || currentProviderConfig?.id === 'azure' ? 'Required if not in backend env' : 'Provider default will be used')}
+                                        helperText={
+                                            (currentProviderConfig?.id === 'custom' || currentProviderConfig?.id === 'openai_compatible' || currentProviderConfig?.id === 'azure')
+                                                ? "Required if not set in backend environment variables."
+                                                : "Optional. Overrides provider default if set in backend env."
+                                        }
                                     />
                                 </Grid>
                             )}
@@ -473,7 +537,11 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                         value={litellmApiKey}
                                         onChange={(e) => setLitellmApiKey(e.target.value)}
                                         fullWidth variant="outlined"
-                                        helperText={`Overrides key from env var (${currentProviderConfig?.requiresApiKeyInEnv || 'N/A'}). Only if provider allows.`}
+                                        helperText={
+                                            currentProviderConfig?.requiresApiKeyInEnv
+                                                ? `Optional. Overrides API key from backend env var (${currentProviderConfig.requiresApiKeyInEnv}).`
+                                                : "Optional. Provide if your custom endpoint needs an API key and it's not in backend env."
+                                        }
                                         autoComplete="new-password"
                                     />
                                 </Grid>
@@ -577,7 +645,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                                 <ListItemText
                                                     primary={`${index + 1}. ${child.name}`}
                                                     secondary={
-                                                        `Type: ${child.agentType || 'Agent'} | LiteLLM Model: ${child.litellm_model_string || 'N/A'} | ` +
+                                                        `Type: ${child.agentType || 'Agent'} | Model: ${child.litellm_model_string || 'N/A'} | ` +
                                                         `Tools: ${child.tools?.length || 0}${child.tools?.some(t => t.configuration) ? ' (Configured)' : ''} | ` +
                                                         `Code Exec: ${child.enableCodeExecution ? 'Yes' : 'No'} | OutputKey: ${child.outputKey || 'N/A'}`
                                                     }
@@ -621,7 +689,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                 open={isChildFormOpen}
                 onClose={handleCloseChildForm}
                 onSave={handleSaveChildAgent}
-                childAgentData={editingChild}
+                childAgentData={editingChild} // This is initialData for the child form
                 availableGofannonTools={availableGofannonTools}
                 loadingGofannon={loadingTools}
                 gofannonError={toolError}

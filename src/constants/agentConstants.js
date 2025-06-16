@@ -1,128 +1,229 @@
 // src/constants/agentConstants.js
-export const AGENT_TYPES = ["Agent", "SequentialAgent", "LoopAgent", "ParallelAgent"];
 
 export const MODEL_PROVIDERS_LITELLM = [
     {
-        id: 'google',
-        name: 'Google (via LiteLLM)',
-        prefix: 'google/', // Maintained for UI parsing/display if needed
-        models: [
-            // IDs are now what LiteLLM expects for its 'model' parameter
-            { id: 'gemini/gemini-1.5-pro-latest', name: 'Gemini 1.5 Pro (Latest)' },
-            { id: 'gemini/gemini-1.5-flash-latest', name: 'Gemini 1.5 Flash (Latest)' },
-            { id: 'gemini/gemini-pro', name: 'Gemini 1.0 Pro' }, // Older, but kept for example
-            { id: 'gemini/gemini-1.0-pro-001', name: 'Gemini 1.0 Pro (001)' },
-        ],
-        apiBase: 'https://generativelanguage.googleapis.com/v1beta',
-        requiresApiKeyInEnv: 'GOOGLE_API_KEY',
-        allowsCustomBase: false,
-        allowsCustomKey: false,
-    },
-    {
-        id: 'openai',
-        name: 'OpenAI (via LiteLLM)',
-        prefix: 'openai/', // Maintained for UI parsing/display
-        models: [
-            { id: 'gpt-4o', name: 'GPT-4o' },
-            { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-            { id: 'gpt-4-turbo-preview', name: 'GPT-4 Turbo Preview' },
-            { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
-        ],
-        apiBase: 'https://api.openai.com/v1',
-        requiresApiKeyInEnv: 'OPENAI_API_KEY',
-        allowsCustomBase: false, // OpenAI generally doesn't allow changing the base for standard models
-        allowsCustomKey: false,
-    },
-    {
-        id: 'anthropic',
-        name: 'Anthropic (via LiteLLM)',
-        prefix: 'anthropic/', // Maintained for UI parsing/display
-        models: [
-            { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus' },
-            { id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet' },
-            { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku' },
-        ],
-        apiBase: 'https://api.anthropic.com/v1', // Default, often proxied. Check LiteLLM docs for direct.
-        requiresApiKeyInEnv: 'ANTHROPIC_API_KEY',
-        allowsCustomBase: false,
-        allowsCustomKey: false,
-    },
-    {
-        id: 'azure',
-        name: 'Azure OpenAI (via LiteLLM)',
-        prefix: 'azure/', // Maintained for UI parsing/display
-        models: [
-            // User will typically provide the full model string for Azure, e.g., "azure/your-deployment-name"
-            // This 'id' is a placeholder to guide the user.
-            { id: 'YOUR_AZURE_DEPLOYMENT_NAME', name: 'Enter Azure Deployment Name as Model String' }
-        ],
-        // LiteLLM docs: For Azure, set AZURE_API_KEY, AZURE_API_BASE, AZURE_API_VERSION
-        // Providing a placeholder here, assuming user might override or rely on env.
-        apiBase: 'https://your-resource-name.openai.azure.com', // Placeholder
-        requiresApiKeyInEnv: 'AZURE_API_KEY', // also AZURE_API_BASE, AZURE_API_VERSION for LiteLLM
-        allowsCustomBase: true, // User often needs to set this if not using AZURE_API_BASE env var
+        id: "openai",
+        name: "OpenAI",
+        apiBase: "https://api.openai.com/v1",
+        requiresApiKeyInEnv: "OPENAI_API_KEY",
+        allowsCustomBase: true, // OpenAI allows specifying a different base URL (e.g., for proxies)
         allowsCustomKey: true,
-    },
-    {
-        id: 'groq',
-        name: 'Groq (via LiteLLM)',
-        prefix: 'groq/',
+        liteLlmModelPrefix: "openai",
         models: [
-            { id: 'llama3-8b-8192', name: 'LLaMA3-8b (Groq)'},
-            { id: 'llama3-70b-8192', name: 'LLaMA3-70b (Groq)'},
-            { id: 'mixtral-8x7b-32768', name: 'Mixtral-8x7B (Groq)'},
-            { id: 'gemma-7b-it', name: 'Gemma-7b-it (Groq)'}
-        ],
-        apiBase: 'https://api.groq.com/openai/v1',
-        requiresApiKeyInEnv: 'GROQ_API_KEY',
-        allowsCustomBase: false,
-        allowsCustomKey: false,
+            { id: "gpt-4o", name: "GPT-4o (Omni)" },
+            { id: "gpt-4-turbo", name: "GPT-4 Turbo" },
+            { id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo" },
+        ]
     },
     {
-        id: 'ollama', // Example for local Ollama models
-        name: 'Ollama (Local via LiteLLM)',
-        prefix: 'ollama/', // User appends model name like ollama/mistral
-        models: [
-            { id: 'mistral', name: 'Mistral (requires Ollama running)'},
-            { id: 'llama2', name: 'Llama2 (requires Ollama running)'},
-            { id: 'codellama', name: 'CodeLlama (requires Ollama running)'}
-            // Add more common Ollama models or guide user to type "ollama/modelname"
-        ],
-        apiBase: 'http://localhost:11434', // Default Ollama API base
-        requiresApiKeyInEnv: null, // Ollama typically doesn't require an API key by default
-        allowsCustomBase: true, // User might run Ollama on a different host/port
-        allowsCustomKey: false, // Usually no API key for Ollama
-    },
-    {
-        id: 'custom',
-        name: 'Custom LiteLLM Configuration',
-        prefix: null, // No prefix for fully custom model strings
-        models: [], // User types the full model string
-        apiBase: 'http://localhost:8000/v1', // Placeholder, user must define
-        requiresApiKeyInEnv: null, // API key handling is entirely up to the custom setup
+        id: "openai_compatible",
+        name: "OpenAI Compatible Endpoint",
+        apiBase: null, // Must be user-provided
+        requiresApiKeyInEnv: null, // API key handling is specific to the endpoint
         allowsCustomBase: true,
         allowsCustomKey: true,
-    }
+        liteLlmModelPrefix: "openai", // LiteLLM uses "openai/" prefix for compatible endpoints too
+        models: [
+            { id: "your-custom-model-name-1", name: "Custom Model 1 (User Defined)" },
+            { id: "your-custom-model-name-2", name: "Custom Model 2 (User Defined)" },
+        ],
+        isCustomEndpoint: true, // Flag to indicate user must provide base URL
+        customInstruction: "For OpenAI-compatible endpoints, provide the API Base URL. The Model String should be the model name expected by your endpoint."
+    },
+    {
+        id: "google_ai_studio", // For Gemini API
+        name: "Google AI Studio (Gemini)",
+        apiBase: "https://generativelanguage.googleapis.com",
+        requiresApiKeyInEnv: "GEMINI_API_KEY", // LiteLLM uses GEMINI_API_KEY
+        allowsCustomBase: false,
+        allowsCustomKey: true, // LiteLLM seems to allow passing api_key for Gemini
+        liteLlmModelPrefix: "gemini",
+        models: [
+            { id: "gemini-2.5-pro-preview-06-05", name: "Gemini 2.5 Pro (Preview)" },
+            { id: "gemini-1.5-flash-latest", name: "Gemini 1.5 Flash (Latest)" },
+            { id: "gemini-pro", name: "Gemini 1.0 Pro" },
+        ]
+    },
+    {
+        id: "anthropic",
+        name: "Anthropic (Claude)",
+        apiBase: "https://api.anthropic.com",
+        requiresApiKeyInEnv: "ANTHROPIC_API_KEY",
+        allowsCustomBase: false,
+        allowsCustomKey: true,
+        liteLlmModelPrefix: "anthropic",
+        models: [
+            { id: "claude-3-opus-20240229", name: "Claude 3 Opus" },
+            { id: "claude-3-sonnet-20240229", name: "Claude 3 Sonnet" },
+            { id: "claude-3-haiku-20240307", name: "Claude 3 Haiku" },
+        ]
+    },
+    {
+        id: "bedrock",
+        name: "AWS Bedrock",
+        apiBase: null, // Determined by AWS SDK (region)
+        requiresApiKeyInEnv: "AWS_ACCESS_KEY_ID", // Also AWS_SECRET_ACCESS_KEY, AWS_REGION_NAME
+        allowsCustomBase: false, // AWS SDK handles endpoint resolution
+        allowsCustomKey: true, // LiteLLM allows passing AWS keys
+        liteLlmModelPrefix: "bedrock", // e.g. bedrock/anthropic.claude-3-opus-20240229-v1:0
+        models: [
+            // Model IDs for Bedrock are full ARNs or provider.model format
+            { id: "anthropic.claude-3-5-sonnet-20240620-v1:0", name: "Claude 3.5 Sonnet (Bedrock)"},
+            { id: "anthropic.claude-3-opus-20240229-v1:0", name: "Claude 3 Opus (Bedrock)" },
+            { id: "anthropic.claude-3-sonnet-20240229-v1:0", name: "Claude 3 Sonnet (Bedrock)" },
+            { id: "anthropic.claude-3-haiku-20240307-v1:0", name: "Claude 3 Haiku (Bedrock)" },
+            { id: "meta.llama3-70b-instruct-v1:0", name: "Meta Llama 3 70B Instruct (Bedrock)" },
+            { id: "amazon.titan-text-express-v1", name: "Amazon Titan Text Express (Bedrock)"},
+        ],
+        customInstruction: "For AWS Bedrock, Model String is the Bedrock Model ID (e.g., anthropic.claude-3-opus-20240229-v1:0). Ensure AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION_NAME) are set in the backend environment or passed if UI supports."
+    },
+    {
+        id: "meta_llama",
+        name: "Meta Llama API",
+        apiBase: "https://api.llama.meta.com/v1", // Example, verify actual endpoint
+        requiresApiKeyInEnv: "LLAMA_API_KEY", // LiteLLM uses LLAMA_API_KEY
+        allowsCustomBase: false,
+        allowsCustomKey: true,
+        liteLlmModelPrefix: "meta_llama",
+        models: [
+            { id: "Llama-3.3-70B-Instruct", name: "Llama 3.3 70B Instruct"},
+            { id: "Llama-3.3-8B-Instruct", name: "Llama 3.3 8B Instruct"},
+            // Add other specific model versions if needed
+        ]
+    },
+    {
+        id: "mistral",
+        name: "Mistral AI",
+        apiBase: "https://api.mistral.ai/v1",
+        requiresApiKeyInEnv: "MISTRAL_API_KEY",
+        allowsCustomBase: false,
+        allowsCustomKey: true,
+        liteLlmModelPrefix: "mistral",
+        models: [
+            { id: "mistral-large-latest", name: "Mistral Large (Latest)" },
+            { id: "mistral-medium-latest", name: "Mistral Medium (Latest)" },
+            { id: "mistral-small-latest", name: "Mistral Small (Latest)" },
+            { id: "open-mixtral-8x7b", name: "Mixtral 8x7B (Open)" },
+            { id: "open-mistral-7b", name: "Mistral 7B (Open)" },
+        ]
+    },
+    {
+        id: "watsonx",
+        name: "IBM WatsonX",
+        apiBase: null, // User must provide WATSONX_URL
+        requiresApiKeyInEnv: "WATSONX_APIKEY", // or WATSONX_TOKEN
+        allowsCustomBase: true, // WatsonX URL is the base
+        allowsCustomKey: true,
+        liteLlmModelPrefix: "watsonx", // e.g. watsonx/google/flan-t5-xxl
+        models: [
+            // Model IDs are provider/model format
+            { id: "meta-llama/llama-3-1-8b-instruct", name: "Llama 3.1 8B Instruct (WatsonX)" },
+            { id: "google/flan-t5-xxl", name: "Google Flan-T5 XXL (WatsonX)" },
+            { id: "ibm/granite-13b-chat-v2", name: "IBM Granite 13B Chat v2 (WatsonX)" },
+        ],
+        customInstruction: "For IBM WatsonX, ensure WATSONX_URL and WATSONX_APIKEY (or WATSONX_TOKEN) are set in the backend or passed. Model String is the WatsonX model ID (e.g., google/flan-t5-xxl). Also requires WATSONX_PROJECT_ID."
+    },
+    {
+        id: "deepseek",
+        name: "Deepseek",
+        apiBase: "https://api.deepseek.com/v1",
+        requiresApiKeyInEnv: "DEEPSEEK_API_KEY",
+        allowsCustomBase: false,
+        allowsCustomKey: true,
+        liteLlmModelPrefix: "deepseek",
+        models: [
+            { id: "deepseek-chat", name: "Deepseek Chat" },
+            { id: "deepseek-coder", name: "Deepseek Coder" },
+        ]
+    },
+    {
+        id: "deepinfra",
+        name: "DeepInfra",
+        apiBase: "https://api.deepinfra.com/v1/openai",
+        requiresApiKeyInEnv: "DEEPINFRA_API_KEY",
+        allowsCustomBase: false, // DeepInfra has a fixed base for OpenAI compatibility
+        allowsCustomKey: true,
+        liteLlmModelPrefix: "deepinfra", // e.g. deepinfra/meta-llama/Llama-2-70b-chat-hf
+        models: [
+            // Model IDs are provider-org/model-name
+            { id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", name: "Llama 3.3 70B Instruct Turbo (DeepInfra)" },
+            { id: "meta-llama/Meta-Llama-3-70B-Instruct", name: "Llama 3 70B Instruct (DeepInfra)" },
+            { id: "mistralai/Mistral-7B-Instruct-v0.1", name: "Mistral 7B Instruct (DeepInfra)" },
+        ],
+        customInstruction: "For DeepInfra, Model String is the full model path (e.g., meta-llama/Meta-Llama-3-8B-Instruct)."
+    },
+    {
+        id: "replicate",
+        name: "Replicate",
+        apiBase: "https://api.replicate.com/v1", // This is for their direct API, LiteLLM handles this
+        requiresApiKeyInEnv: "REPLICATE_API_KEY",
+        allowsCustomBase: false,
+        allowsCustomKey: true,
+        liteLlmModelPrefix: "replicate", // e.g. replicate/meta/meta-llama-3-8b-instruct
+        models: [
+            // Model IDs are owner/model-name:version-hash or owner/model-name if latest
+            { id: "meta/meta-llama-3-8b-instruct", name: "Llama 3 8B Instruct (Replicate)" },
+            { id: "mistralai/mistral-7b-instruct-v0.2", name: "Mistral 7B Instruct v0.2 (Replicate)" },
+        ],
+        customInstruction: "For Replicate, Model String is owner/model-name or owner/model-name:version-hash (e.g., meta/meta-llama-3-8b-instruct)."
+    },
+    {
+        id: "together_ai",
+        name: "TogetherAI",
+        apiBase: "https://api.together.xyz/v1",
+        requiresApiKeyInEnv: "TOGETHER_AI_API_KEY",
+        allowsCustomBase: false,
+        allowsCustomKey: true,
+        liteLlmModelPrefix: "together_ai", // e.g. together_ai/mistralai/Mixtral-8x7B-Instruct-v0.1
+        models: [
+            // Model IDs are owner/model-name format
+            { id: "mistralai/Mixtral-8x7B-Instruct-v0.1", name: "Mixtral 8x7B Instruct (TogetherAI)" },
+            { id: "meta-llama/Llama-3-8b-chat-hf", name: "Llama 3 8B Chat (TogetherAI)" },
+            { id: "meta-llama/Llama-3-70b-chat-hf", name: "Llama 3 70B Chat (TogetherAI)" },
+            { id: "databricks/dbrx-instruct", name: "DBRX Instruct (TogetherAI)"},
+        ],
+        customInstruction: "For TogetherAI, Model String is the full model path (e.g., mistralai/Mixtral-8x7B-Instruct-v0.1)."
+    },
+    {
+        id: "custom", // For any other LiteLLM supported provider or direct OpenAI-compatible URL
+        name: "Custom (Advanced)",
+        apiBase: null, // User must provide
+        requiresApiKeyInEnv: null, // User must handle API key env or pass directly
+        allowsCustomBase: true,
+        allowsCustomKey: true,
+        liteLlmModelPrefix: null, // Model string is provided as-is by the user
+        models: [
+            { id: "custom/my-ollama-model", name: "Example: My Ollama Model (User Defined)"},
+            { id: "custom/my-vllm-endpoint", name: "Example: My vLLM Model (User Defined)"},
+        ],
+        isCustomEndpoint: true,
+        customInstruction: "For custom providers, enter the complete LiteLLM model string (e.g., 'ollama/mistral', 'groq/mixtral-8x7b-32768'). You may also need to set API Base and/or API Key overrides if not configured in the backend environment."
+    },
+    {
+        id: "azure", // Azure OpenAI
+        name: "Azure OpenAI",
+        apiBase: null, // Must be set via AZURE_API_BASE env var or user override
+        requiresApiKeyInEnv: "AZURE_API_KEY", // Also AZURE_API_VERSION
+        allowsCustomBase: true,
+        allowsCustomKey: true,
+        liteLlmModelPrefix: "azure", // LiteLLM expects "azure/<your-deployment-name>"
+        models: [
+            // For Azure, the "id" here represents the "deployment name"
+            { id: "gpt-4o-deployment", name: "GPT-4o (Azure Deployment)" },
+            { id: "gpt-35-turbo-deployment", name: "GPT-3.5 Turbo (Azure Deployment)" },
+        ],
+        customInstruction: "For Azure OpenAI, Model String is your Azure Deployment Name. Ensure AZURE_API_KEY, AZURE_API_BASE, and AZURE_API_VERSION are set in the backend environment or passed as overrides."
+    },
 ];
 
-// Determine the default provider and model based on the updated structure
-const defaultProvider = MODEL_PROVIDERS_LITELLM.find(p => p.id === 'google') || MODEL_PROVIDERS_LITELLM[0];
-const defaultBaseModel = defaultProvider.models.find(m => m.id === 'gemini/gemini-1.5-flash-latest') || defaultProvider.models[0];
+// Default provider and model
+export const DEFAULT_LITELLM_PROVIDER_ID = "openai"; // OpenAI is a common default
+export const DEFAULT_LITELLM_MODEL_STRING = "openai/gpt-4o"; // Default to GPT-4o for OpenAI
+const defaultProvider = MODEL_PROVIDERS_LITELLM.find(p => p.id === DEFAULT_LITELLM_PROVIDER_ID);
+export const DEFAULT_LITELLM_BASE_MODEL_ID = defaultProvider?.models[0]?.id || "gpt-3.5-turbo"; // Default to first model of default provider
 
-export const DEFAULT_LITELLM_PROVIDER_ID = defaultProvider.id;
-// DEFAULT_LITELLM_BASE_MODEL_ID now stores the full LiteLLM model string for the default model
-export const DEFAULT_LITELLM_BASE_MODEL_ID = defaultBaseModel.id;
-// DEFAULT_LITELLM_MODEL_STRING is the same, used as the initial value for the model string state
-export const DEFAULT_LITELLM_MODEL_STRING = defaultBaseModel.id;
+export const AGENT_TYPES = ["Agent", "SequentialAgent", "ParallelAgent", "LoopAgent"];
 
-// Helper function to get provider config by ID
 export const getLiteLLMProviderConfig = (providerId) => {
     return MODEL_PROVIDERS_LITELLM.find(p => p.id === providerId);
-};
-
-// Helper function to get model config by ID within a provider
-// Note: modelId here is the full LiteLLM model string (e.g., "gpt-4o", "gemini/gemini-1.5-flash-latest")
-export const getLiteLLMModelConfig = (providerId, modelId) => {
-    const provider = getLiteLLMProviderConfig(providerId);
-    return provider?.models.find(m => m.id === modelId);
 };  
