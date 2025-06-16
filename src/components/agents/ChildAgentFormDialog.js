@@ -89,7 +89,6 @@ const ChildAgentFormDialog = ({
 
             let initialSelectedProvider = dataToLoad.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID;
             let initialBaseModelName = dataToLoad.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID;
-            let initialInputtedModelStr = dataToLoad.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID;
 
 
             if (!dataToLoad.selectedProviderId && dataToLoad.litellm_model_string) {
@@ -110,7 +109,7 @@ const ChildAgentFormDialog = ({
                         initialBaseModelName = fullModelStr;
                     }
                 }
-                initialInputtedModelStr = initialBaseModelName;
+
             }
 
             setSelectedProviderId(initialSelectedProvider);
@@ -179,7 +178,7 @@ const ChildAgentFormDialog = ({
             setLitellmApiBase(providerConf.allowsCustomBase ? (litellmApiBase || '') : (providerConf.apiBase || ''));
             setLitellmApiKey('');
         }
-    }, [selectedProviderId, open, childAgentData]); // Depends on childAgentData to correctly preserve custom strings
+    }, [selectedProviderId, open, childAgentData, litellmApiBase, selectedBaseModelId, currentProviderConfig]); // Depends on childAgentData to correctly preserve custom strings
 
     // Effect for handling selectedBaseModelId change (for non-custom providers)
     useEffect(() => {

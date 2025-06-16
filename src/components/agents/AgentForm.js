@@ -100,7 +100,6 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
 
             let initialSelectedProvider = initialData.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID;
             let initialBaseModelName = initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID; // This is the base model name part
-            let initialInputtedModelStr = initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID;
 
             // Infer provider if not set, and derive base model name if a prefix exists
             if (!initialData.selectedProviderId && initialData.litellm_model_string) {
@@ -127,7 +126,6 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                         initialBaseModelName = fullModelStr; // For custom, base model is the full string
                     }
                 }
-                initialInputtedModelStr = initialBaseModelName; // For custom this is full, for others it's base
             }
             setSelectedProviderId(initialSelectedProvider);
 
@@ -199,7 +197,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             setLitellmApiBase(providerConf.allowsCustomBase ? (litellmApiBase || '') : (providerConf.apiBase || ''));
             setLitellmApiKey(''); // API key generally should be cleared or re-evaluated
         }
-    }, [selectedProviderId, initialData]);
+    }, [selectedProviderId, initialData, litellmApiBase, selectedBaseModelId]);
 
     // Effect for handling selectedBaseModelId change (for non-custom providers)
     useEffect(() => {
