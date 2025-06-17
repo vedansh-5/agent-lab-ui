@@ -1,3 +1,4 @@
+// src/services/firebaseService.js  
 import { db } from '../firebaseConfig';
 import {
     collection,
@@ -5,7 +6,7 @@ import {
     getDocs,
     doc,
     getDoc,
-    setDoc, // Changed from updateDoc for ensureUserProfile to allow creating with specific ID
+    setDoc,
     updateDoc,
     deleteDoc,
     query,
@@ -14,16 +15,40 @@ import {
     orderBy
 } from 'firebase/firestore';
 
-// Agents (existing functions - no change for this part)
-export const createAgentInFirestore = async (userId, agentData) => {
-    // agentData: { name, description, agentType, model, instruction, tools: [{id, name, module_path, class_name}]}
+// Agents  
+export const createAgentInFirestore = async (userId, agentData, isImport = false) => {
     try {
-        const docRef = await addDoc(collection(db, "agents"), {
+        const dataToSave = {
             userId,
             ...agentData,
+            isPublic: false, // Always private on creation/import  
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
-            deploymentStatus: "not_deployed"
+            deploymentStatus: "not_deployed",
+            vertexAiResourceName: null,
+            lastDeployedAt: null,
+            lastDeploymentAttemptAt: null,
+            deploymentError: null,
+        };
+        // Remove fields that should not be in the agentData from import  
+        if (isImport) {
+            delete dataToSave.id; // Firestore will generate  
+            delete dataToSave.userId; // Already set above  
+            // isPublic, createdAt, etc. are set above.
+        }
+
+
+        const docRef = await addDoc(collection(db, "agents"), {
+            userId, // ensure userId is explicitly set for the doc owner  
+            ...agentData, // contains the core config  
+            isPublic: false, // All new/imported agents start as private  
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            deploymentStatus: "not_deployed", // New/imported agents are not deployed  
+            vertexAiResourceName: null,
+            lastDeployedAt: null,
+            lastDeploymentAttemptAt: null,
+            deploymentError: null,
         });
         return docRef.id;
     } catch (e) {
@@ -32,11 +57,27 @@ export const createAgentInFirestore = async (userId, agentData) => {
     }
 };
 
-export const getUserAgents = async (userId) => {
-    const q = query(collection(db, "agents"), where("userId", "==", userId), orderBy("createdAt", "desc"));
+// Renamed from getUserAgents to be more specific  
+export const getMyAgents = async (userId) => {
+    const q = query(collection(db, "agents"), where("userId", "==", userId), orderBy("updatedAt", "desc"));
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 };
+
+// New function to get public agents  
+export const getPublicAgents = async (currentUserId) => {
+    const q = query(
+        collection(db, "agents"),
+        where("isPublic", "==", true),
+        orderBy("updatedAt", "desc")
+    );
+    const querySnapshot = await getDocs(q);
+    // Filter out agents owned by the current user, as they'll be in "My Agents"  
+    return querySnapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter(agent => agent.userId !== currentUserId);
+};
+
 
 export const getAgentDetails = async (agentId) => {
     const docRef = doc(db, "agents", agentId);
@@ -44,6 +85,7 @@ export const getAgentDetails = async (agentId) => {
     if (docSnap.exists()) {
         return { id: docSnap.id, ...docSnap.data() };
     } else {
+        // console.error("Agent not found in Firestore with ID:", agentId); // Firebase console logs this.  
         throw new Error("Agent not found");
     }
 };
@@ -57,17 +99,19 @@ export const updateAgentInFirestore = async (agentId, updatedData) => {
 };
 
 export const deleteAgentFromFirestore = async (agentId) => {
+    // Before deleting the agent, consider deleting its subcollections (e.g., runs) if necessary.  
+    // This example does not implement recursive deletion for subcollections.  
     await deleteDoc(doc(db, "agents", agentId));
 };
 
-// Agent Runs (existing functions - no change for this part)
+// Agent Runs  
 export const getAgentRuns = async (agentId) => {
     const q = query(collection(db, "agents", agentId, "runs"), orderBy("timestamp", "desc"));
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 };
 
-// Gofannon Tool Manifest (existing functions - no change for this part)
+// Gofannon Tool Manifest  
 export const getStoredGofannonManifest = async () => {
     const docRef = doc(db, "gofannonToolManifest", "latest");
     const docSnap = await getDoc(docRef);
@@ -78,32 +122,21 @@ export const getStoredGofannonManifest = async () => {
 };
 
 
-// --- NEW User Profile and Permissions Functions ---
-
-/**
- * Ensures a user profile document exists in Firestore.
- * If it doesn't, creates a basic one WITHOUT the 'permissions' field.
- * Returns the user profile data.
- */
+// --- User Profile and Permissions Functions ---  
 export const ensureUserProfile = async (authUser) => {
-    console.log('ensureUserProfile tripped')
     if (!authUser) return null;
-
     const userRef = doc(db, "users", authUser.uid);
     const userSnap = await getDoc(userRef);
 
     if (userSnap.exists()) {
-        // User exists, update last login and return their data
         await updateDoc(userRef, {
             lastLoginAt: serverTimestamp(),
-            // Optionally update email/displayName/photoURL if they changed in Auth
             email: authUser.email,
             displayName: authUser.displayName || null,
             photoURL: authUser.photoURL || null,
         });
         return { uid: userSnap.id, ...userSnap.data() };
     } else {
-        // New user, create profile WITHOUT permissions field
         const newUserProfile = {
             uid: authUser.uid,
             email: authUser.email,
@@ -111,39 +144,28 @@ export const ensureUserProfile = async (authUser) => {
             photoURL: authUser.photoURL || null,
             createdAt: serverTimestamp(),
             lastLoginAt: serverTimestamp(),
-            // 'permissions' field is intentionally omitted here
         };
         await setDoc(userRef, newUserProfile);
         return newUserProfile;
     }
 };
 
-/**
- * Fetches all users from the 'users' collection and filters
- * for those that do not have the 'permissions' field defined.
- */
 export const getUsersForAdminReview = async () => {
     const usersCol = collection(db, "users");
     const userSnapshot = await getDocs(usersCol);
     const allUsers = userSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-    // Filter for users where the 'permissions' field is not defined
     return allUsers.filter(user => user.permissions === undefined);
 };
 
-/**
- * Updates (or sets) the permissions field for a specific user.
- */
 export const updateUserPermissions = async (targetUserId, permissionsData) => {
     const userRef = doc(db, "users", targetUserId);
     try {
         await updateDoc(userRef, {
             permissions: permissionsData,
-            permissionsLastUpdatedAt: serverTimestamp(), // Track when permissions were last set/updated
+            permissionsLastUpdatedAt: serverTimestamp(),
         });
-        console.log(`Permissions updated for user ${targetUserId}`);
     } catch (error) {
         console.error(`Error updating permissions for user ${targetUserId}:`, error);
         throw error;
     }
-};
+};  
