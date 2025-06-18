@@ -44,6 +44,11 @@ jobs:
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI }}
 
+      - name: Configure Google ADC  
+        run: |  
+          mkdir -p ~/.config/gcloud  
+          cp "${{ steps.auth.outputs.credentials_file_path }}" ~/.config/gcloud/application_default_credentials.json 
+
       - name: Prepare Python Env
         working-directory: ./functions
         run: |
@@ -52,12 +57,42 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Add environment secrets to .env  
+        env:  
+          SECRETS: "OPENAI_API_KEY,DEEPINFRA_API_KEY,GITHUB_TOKEN" # Comma separated list of your secrets  
+        working-directory: ./functions
+        run: |  
+          touch .env
+          for SECRET in $(echo $SECRETS | sed "s/,/ /g")  
+          do  
+            # Check if the secret is GITH_TOKEN and rename it to GITHUB_TOKEN  
+            if [ "$SECRET" = "GITH_TOKEN" ]; then  
+              OUTPUT_SECRET_NAME="GITHUB_TOKEN"  
+            else  
+              OUTPUT_SECRET_NAME="$SECRET"  
+            fi  
+            # Append the secret to the .env file  
+            echo "${OUTPUT_SECRET_NAME}=${!SECRET}" >> .env
+          done
+
       - name: Deploy Firebase Functions
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
-        run: |
-          echo "Deploying Functions to project: ${{ env.PROJECT_ID }}"
-          firebase deploy --only functions --project ${{ env.PROJECT_ID }} --force --source ./functions
+          GOOGLE_CLOUD_PROJECT: ${{ env.PROJECT_ID }}
+          GCLOUD_PROJECT: ${{ env.PROJECT_ID }}
+          PROJECT_ID: agent-web-ui
+        working-directory: ./
+        run: |  
+          echo "--- Environment for Firebase Deploy ---"  
+          echo "GOOGLE_APPLICATION_CREDENTIALS: $GOOGLE_APPLICATION_CREDENTIALS"  
+          echo "GOOGLE_CLOUD_PROJECT: $GOOGLE_CLOUD_PROJECT"  
+          echo "GCLOUD_PROJECT: $GCLOUD_PROJECT"  
+          echo "Current directory: $(pwd)"  
+          ls -la # Show files in current directory, check for firebase.json  
+          echo "---------------------------------------"  
+            
+          echo "Deploying Functions to project: $GOOGLE_CLOUD_PROJECT"  
+          firebase deploy --only functions --project "$GOOGLE_CLOUD_PROJECT"
 
       - name: Clean up config file
         if: always()
