@@ -4,7 +4,7 @@ import {
     Dialog, DialogTitle, DialogContent, DialogActions, Button,
     List, ListItemButton, ListItemText, CircularProgress, Alert, Typography, Box
 } from '@mui/material';
-import { getUserAgents } from '../../services/firebaseService'; // Assuming this fetches all agents for the user
+import { getMyAgents } from '../../services/firebaseService'; // UPDATED: Changed from getUserAgents
 import { useAuth } from '../../contexts/AuthContext';
 
 const ExistingAgentSelectorDialog = ({ open, onClose, onAgentSelected }) => {
@@ -17,7 +17,7 @@ const ExistingAgentSelectorDialog = ({ open, onClose, onAgentSelected }) => {
         if (open && currentUser) {
             setLoading(true);
             setError(null);
-            getUserAgents(currentUser.uid)
+            getMyAgents(currentUser.uid) // UPDATED: Changed from getUserAgents
                 .then(agents => {
                     setAvailableAgents(agents);
                 })
@@ -49,7 +49,7 @@ const ExistingAgentSelectorDialog = ({ open, onClose, onAgentSelected }) => {
                             <ListItemButton key={agent.id} onClick={() => handleSelectAgent(agent)}>
                                 <ListItemText
                                     primary={agent.name}
-                                    secondary={`Type: ${agent.agentType} | Model: ${agent.model || 'N/A'}`}
+                                    secondary={`Type: ${agent.agentType || 'Agent'} | Model: ${agent.litellm_model_string || 'N/A'}`}
                                 />
                             </ListItemButton>
                         ))}

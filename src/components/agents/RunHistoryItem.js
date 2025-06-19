@@ -2,11 +2,11 @@
 import React, { useState, useEffect } from 'react';
 import {
     Accordion, AccordionSummary, AccordionDetails, Box, Typography, Paper, Chip,
-    Alert
+    Alert, Button as MuiButton // Renamed to avoid conflict if you have another Button
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PageviewIcon from '@mui/icons-material/Pageview';
-import Inventory2Icon from '@mui/icons-material/Inventory2'; // For artifacts
+import Inventory2Icon from '@mui/icons-material/Inventory2';
 
 const RunHistoryItem = ({ run, index, onSelectRun }) => {
     const [artifactSummary, setArtifactSummary] = useState('');
@@ -46,9 +46,8 @@ const RunHistoryItem = ({ run, index, onSelectRun }) => {
         }
     }, [run.outputEventsRaw]);
 
-
-    const handleViewInRunner = (event) => {
-        event.stopPropagation(); // Prevent Accordion toggle if not desired
+    const handleViewButtonClick = (event) => {
+        event.stopPropagation(); // Prevent Accordion toggle when the button is clicked
         if (onSelectRun) {
             onSelectRun(run);
         }
@@ -57,39 +56,58 @@ const RunHistoryItem = ({ run, index, onSelectRun }) => {
     return (
         <Accordion TransitionProps={{ unmountOnExit: true }}>
             <AccordionSummary
+                component="div" // Key Fix: Render AccordionSummary as a div
                 expandIcon={<ExpandMoreIcon />}
                 aria-controls={`run-${index}-content`}
                 id={`run-${index}-header`}
-                sx={{
-                    '& .MuiAccordionSummary-content': {
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        width: '100%'
-                    }
+                sx={{ // Style the div to behave like the summary
+                    display: 'flex',
+                    alignItems: 'center',
+                    width: '100%',
+                    cursor: 'pointer', // Keep it feeling clickable for accordion toggle
+                    // Adjust padding if necessary, as default summary padding might change
+                    // '& .MuiAccordionSummary-content': { margin: '0px important!' }, // Example override
                 }}
+                // The Accordion's own click handler will toggle it when the div (summary) is clicked
             >
-                <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 1, overflow: 'hidden', mr: 1 }}>
-                    <Typography variant="subtitle1" sx={{ flexShrink: 0, mr: 2,  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={run.inputMessage}>
+                {/* Main content of the summary */}
+                <Box
+                    sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        flexGrow: 1,
+                        overflow: 'hidden',
+                        mr: 1, // Margin for spacing before the button
+                    }}
+                >
+                    <Typography
+                        variant="subtitle1"
+                        sx={{
+                            flexShrink: 0,
+                            mr: 2,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                        }}
+                        title={run.inputMessage}
+                    >
                         {run.inputMessage?.substring(0, 50)}{run.inputMessage?.length > 50 && '...'}
                     </Typography>
                     <Typography variant="caption" color="text.secondary" sx={{ml: 'auto', flexShrink:0, textAlign: 'right' }}>
                         {run.timestamp?.toDate ? new Date(run.timestamp.toDate()).toLocaleString() : 'N/A'}
                     </Typography>
                 </Box>
-                <Box
-                    onClick={handleViewInRunner}
-                    sx={{
-                        display: 'inline-flex', alignItems: 'center', cursor: 'pointer', color: 'primary.main',
-                        border: '1px solid', borderColor: 'primary.main', borderRadius: 1,
-                        px: 1.5, py: 0.5, ml: 1, flexShrink: 0, fontSize: '0.8125rem',
-                        '&:hover': { bgcolor: 'primary.action.hover' }
-                    }}
-                    role="button" tabIndex={0}
-                    onKeyPress={(e) => { if (e.key === 'Enter' || e.key === ' ') handleViewInRunner(e); }}
+
+                {/* Actual MUI Button for "View" action */}
+                <MuiButton
+                    size="small"
+                    variant="outlined"
+                    onClick={handleViewButtonClick}
+                    startIcon={<PageviewIcon />}
+                    sx={{ ml: 1, flexShrink: 0 }} // Ensure it doesn't get squeezed
                 >
-                    <PageviewIcon sx={{ mr: 0.5, fontSize: '1.125rem' }} />
-                    <Typography variant="button" sx={{ lineHeight: 'inherit', fontSize: 'inherit' }}>View</Typography>
-                </Box>
+                    View
+                </MuiButton>
             </AccordionSummary>
             <AccordionDetails sx={{ bgcolor: 'action.hover' }}>
                 <Typography variant="caption" display="block" gutterBottom>
@@ -109,7 +127,6 @@ const RunHistoryItem = ({ run, index, onSelectRun }) => {
                     </Paper>
                 </Box>
 
-                {/* Display Artifact Summary */}
                 {artifactSummary && (
                     <Box mt={1} mb={2}>
                         <Typography variant="overline" display="flex" alignItems="center" color="text.secondary">
@@ -123,16 +140,19 @@ const RunHistoryItem = ({ run, index, onSelectRun }) => {
 
                 {run.queryErrorDetails && run.queryErrorDetails.length > 0 && (
                     <Box mt={1} mb={2}>
-                        <Alert /* ... existing error alert props ... */ >
-                            {/* ... existing error alert content ... */}
+                        <Alert severity="warning" >
+                            <Typography variant="caption" sx={{fontWeight:'bold'}}>Query Error Details:</Typography>
+                            <Box component="pre" sx={{whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize:'0.8rem', maxHeight:'100px', overflowY:'auto'}}>
+                                {typeof run.queryErrorDetails === 'string' ? run.queryErrorDetails : JSON.stringify(run.queryErrorDetails, null, 2)}
+                            </Box>
                         </Alert>
                     </Box>
                 )}
 
                 {run.outputEventsRaw && (
                     <Box>
-                        <Typography /* ... existing raw events props ... */ >Raw Events ({JSON.parse(run.outputEventsRaw)?.length || 0}):</Typography>
-                        <Paper /* ... existing raw events paper props ... */ >
+                        <Typography variant="overline" color="text.secondary" display="block">Raw Events ({JSON.parse(run.outputEventsRaw)?.length || 0}):</Typography>
+                        <Paper variant="outlined" component="pre" sx={{ p: 1, mt: 0.5, whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: '0.75rem', bgcolor: 'background.default' }}>
                             {JSON.stringify(JSON.parse(run.outputEventsRaw), null, 2)}
                         </Paper>
                     </Box>

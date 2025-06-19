@@ -14,101 +14,147 @@ service cloud.firestore {
       allow get: if request.auth.uid == userId || isAdmin();
 
       // Admin can list all user profiles (for AdminPage).
-      // Note: getUsersForAdminReview fetches all then filters client-side.
-      // For large user bases, consider server-side filtering if performance degrades.
       allow list: if isAdmin();
 
       // User can create their own profile document (on first login).
-      // Ensure they are not trying to set permissions for themselves during creation.
       allow create: if request.auth.uid == userId &&
                        !("permissions" in request.resource.data); // Prevent setting permissions on self-create
 
       // User can update specific fields of their own profile.
       // Admin can update any user's 'permissions' and 'permissionsLastUpdatedAt' fields.
       allow update: if request.auth.uid == userId &&
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'email', 'displayName', 'photoURL', 'updatedAt']) // Added 'updatedAt' if you track it
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'email', 'displayName', 'photoURL', 'updatedAt'])
                     || // OR
                     isAdmin() &&
                        request.resource.data.diff(resource.data).affectedKeys().hasAny(['permissions', 'permissionsLastUpdatedAt']);
                        // To be more strict, admins should ONLY be able to update permissions and related fields:
                        // request.resource.data.diff(resource.data).affectedKeys().hasOnly(['permissions', 'permissionsLastUpdatedAt']);
 
-      // Generally, users should not delete their own profiles through the app. Admins might.
-      allow delete: if isAdmin(); // Or 'if false;' if no direct profile deletion is intended
+      allow delete: if isAdmin();
     }
 
     // --- Agents Collection ---
     match /agents/{agentId} {
-      // User must be authenticated to create an agent.
-      // Check if user has 'canCreateAgent' permission.
-      function canCreateAgent() {
-        return request.auth != null &&
-               exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.canCreateAgent == true;
-      }
-
-      allow create: if canCreateAgent();
-
-      // Owner can read, update, delete their agents.
-      // Admin can also read/update/delete any agent (for moderation, support).
       function isOwner(docData) {
         return request.auth.uid == docData.userId;
       }
-      function isAdmin() { // Re-declared for local scope if needed, or use a global function
+      // Re-declared isAdmin for local scope if needed, or use a global function reference
+      function isAdmin() { // Ensure this is defined or accessible globally if not re-declared
         return request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
                get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.isAdmin == true;
       }
+      function isAgentPublic() {
+        return resource.data.isPublic == true;
+      }
 
-      allow read, update, delete: if isOwner(resource.data) || isAdmin();
+      // Allow create if user is authenticated and setting their own userId.
+      // isPublic defaults to false on client/backend, rule just checks it's a boolean.
+      allow create: if request.auth.uid == request.resource.data.userId &&
+                       (request.resource.data.deploymentStatus == "not_deployed" || !("deploymentStatus" in request.resource.data)) &&
+                       (request.resource.data.isPublic == false || request.resource.data.isPublic == true); // isPublic must be boolean
 
-      // Allow listing by user for their own dashboard.
-      // Ensure the query from client-side is 'where("userId", "==", request.auth.uid)'
-      allow list: if request.auth.uid != null &&
-                     request.query.resource.__name__[0] == 'projects' && // General sanity check for collection query
-                     request.query.filters.size() > 0 &&
-                     request.query.filters[0].fieldPath == "userId" &&
-                     request.query.filters[0].op == "==" &&
-                     request.query.filters[0].value == request.auth.uid;
+      // Owner, admin, or if agent is public can read.
+      allow get: if isOwner(resource.data) || isAdmin() || isAgentPublic();
+
+      // Admin can list all.
+      // Users can list their own agents OR public agents. Client makes separate queries.
+      allow list: if isAdmin() || (
+                     request.auth.uid != null &&
+                     request.query.resource.__name__[0] == 'projects' && // General sanity check
+                     request.query.filters.size() > 0 && (
+                       // Querying own agents
+                       (request.query.filters[0].fieldPath == "userId" &&
+                        request.query.filters[0].op == "==" &&
+                        request.query.filters[0].value == request.auth.uid)
+                       ||
+                       // Querying public agents
+                       (request.query.filters[0].fieldPath == "isPublic" &&
+                        request.query.filters[0].op == "==" &&
+                        request.query.filters[0].value == true)
+                     )
+                   );
+
+      // Owner can update their agent's config fields including 'isPublic'.
+      // Admin can update agent's config fields, 'isPublic', and deployment fields.
+      allow update: if
+                    (isOwner(resource.data) &&
+                      request.resource.data.userId == resource.data.userId && // Owner cannot change userId
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'name', 'description', 'agentType', 'instruction', 'tools', 'enableCodeExecution',
+                        'usedCustomRepoUrls', 'selectedProviderId', 'litellm_model_string', 'litellm_api_base',
+                        'litellm_api_key', 'outputKey', 'maxLoops', 'childAgents', 'platform',
+                        'isPublic', // Owner can change publicity
+                        'updatedAt'
+                        // Owner cannot directly change deployment fields via this rule
+                      ]) && (
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+                            'deploymentStatus', 'vertexAiResourceName', 'lastDeployedAt',
+                            'lastDeploymentAttemptAt', 'deploymentError'
+                        ]) || ( // Allow if these fields are not changing
+                            request.resource.data.deploymentStatus == resource.data.deploymentStatus &&
+                            request.resource.data.vertexAiResourceName == resource.data.vertexAiResourceName &&
+                            request.resource.data.lastDeployedAt == resource.data.lastDeployedAt &&
+                            request.resource.data.lastDeploymentAttemptAt == resource.data.lastDeploymentAttemptAt &&
+                            request.resource.data.deploymentError == resource.data.deploymentError
+                        )
+                      )
+                    ) ||
+                    (isAdmin() &&
+                      request.resource.data.userId == resource.data.userId && // Admin cannot change userId
+                      request.resource.data.diff(resource.data).affectedKeys().hasAny([
+                        'name', 'description', 'agentType', 'instruction', 'tools', 'enableCodeExecution',
+                        'usedCustomRepoUrls', 'selectedProviderId', 'litellm_model_string', 'litellm_api_base',
+                        'litellm_api_key', 'outputKey', 'maxLoops', 'childAgents', 'platform',
+                        'isPublic', // Admin can change publicity
+                        'deploymentStatus', 'vertexAiResourceName', 'lastDeployedAt',
+                        'lastDeploymentAttemptAt', 'deploymentError',
+                        'updatedAt'
+                      ])
+                    );
+
+      // Owner or Admin can delete.
+      allow delete: if isOwner(resource.data) || isAdmin();
     }
 
     // --- Agent Runs Subcollection ---
     match /agents/{agentId}/runs/{runId} {
-      function isAgentOwner() {
+      function isAgentOwnerForRuns() {
         return request.auth.uid != null &&
                exists(/databases/$(database)/documents/agents/$(agentId)) &&
                get(/databases/$(database)/documents/agents/$(agentId)).data.userId == request.auth.uid;
       }
-       function canRunAgent() {
+      function isParentAgentPublic() {
+        return exists(/databases/$(database)/documents/agents/$(agentId)) &&
+               get(/databases/$(database)/documents/agents/$(agentId)).data.isPublic == true;
+      }
+      function canRunAgent() {
         return request.auth != null &&
                exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
                get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.canRunAgent == true;
       }
-      function isAdmin() {
+      function isAdmin() { // Ensure this is defined or accessible globally if not re-declared
         return request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
                get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.isAdmin == true;
       }
 
+      // Agent owner OR if agent is public, and user has 'canRunAgent' permission can create runs. Admin can also create.
+      allow create: if ((isAgentOwnerForRuns() || isParentAgentPublic()) && canRunAgent()) || isAdmin();
 
-      // Agent owner who has 'canRunAgent' permission can create runs. Admin can also create (e.g., for testing).
-      allow create: if (isAgentOwner() && canRunAgent()) || isAdmin();
-
-      // Agent owner can read their agent's runs. Admin can read any.
-      allow read: if isAgentOwner() || isAdmin();
-      allow list: if isAgentOwner() || isAdmin(); // For listing runs for a specific agent
+      // Agent owner OR if agent is public can read their agent's runs. Admin can read any.
+      allow read: if isAgentOwnerForRuns() || isParentAgentPublic() || isAdmin();
+      allow list: if isAgentOwnerForRuns() || isParentAgentPublic() || isAdmin(); // For listing runs for a specific agent
     }
 
     // --- Gofannon Tool Manifest ---
     match /gofannonToolManifest/{docId} {
-      function isAdmin() {
+      function isAdmin() { // Ensure this is defined or accessible globally if not re-declared
         return request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
                get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions.isAdmin == true;
       }
       // Authenticated users can read.
       allow read: if request.auth != null;
       // Only admin (or a specific service account/function) can write.
-      allow write: if isAdmin(); // Or a more specific rule for a backend process
+      allow write: if isAdmin();
     }
-
-    // (userSettings collection can be added here if needed later with similar logic)
   }
 }
