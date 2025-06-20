@@ -22,6 +22,7 @@ import * as analyticsService from './services/analyticsService';
 // MUI Imports for App Layout
 import { Box, Container, Typography, Link as MuiLink } from '@mui/material';
 import PlatformUnderConstructionPage from "./pages/PlatformUnderConstructionPage";
+import AboutPage from "./pages/AboutPage";
 
 // Helper function to update meta tags
 const updateMetaTagContent = (metaId, content) => {
@@ -118,6 +119,7 @@ function AppContent() {
                 <Routes>
                     <Route path="/" element={<HomePage />} />
                     <Route path="/unauthorized" element={<UnauthorizedPage />} />
+                    <Route path="/about" element={<AboutPage />} />
                     <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
                     <Route path="/create-agent" element={<ProtectedRoute><CreateAgentPage /></ProtectedRoute>} />
                     <Route path="/agent/:agentId/edit" element={<ProtectedRoute><CreateAgentPage isEditMode={true} /></ProtectedRoute>} />

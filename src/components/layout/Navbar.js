@@ -16,6 +16,7 @@ import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import AccountCircle from '@mui/icons-material/AccountCircle';
 import { useTheme } from '@mui/material/styles';
+import InfoIcon from "@mui/icons-material/Info";
 
 const Navbar = () => {
     const { currentUser, logout } = useAuth();
@@ -122,6 +123,10 @@ const Navbar = () => {
                             onClose={handleClose}
                         >
                             <MenuItem component={RouterLink} to="/settings" onClick={handleClose}>Settings</MenuItem>
+                            <MenuItem component={RouterLink} to="/about" onClick={handleClose}>
+                                <InfoIcon sx={{ mr: 1 }} fontSize="small" />
+                                About
+                            </MenuItem>
                             {currentUser.permissions?.isAdmin && ( // Check for admin permission
                                 <MenuItem
                                     component={RouterLink}
