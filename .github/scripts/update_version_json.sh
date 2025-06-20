@@ -47,19 +47,21 @@ echo "Updating '$VERSION_FILE' to version: $VERSION_INPUT, buildDate: $BUILD_DAT
 # Define the jq program/filter as a shell variable  
 JQ_PROGRAM_STRING='.version = $new_version | .buildDate = $build_date'  
   
+echo "Updating '$VERSION_FILE' to version: $VERSION_INPUT, buildDate: $BUILD_DATE"  
+  
+# Define the jq program/filter as a shell variable  
+JQ_PROGRAM_STRING='.version = $new_version | .buildDate = $build_date'  
+  
 echo "JQ Program String to be used: ${JQ_PROGRAM_STRING}"  
   
-# Execute jq using process substitution for the filter program.  
-# <(echo "$JQ_PROGRAM_STRING") will be replaced by a temporary file path (e.g., /dev/fd/63)  
-# containing the output of the echo command.  
-# All arguments for jq are now on one conceptual line for the shell after the process substitution.  
+# Execute jq directly with the filter string  
 jq --arg new_version "$VERSION_INPUT" \  
    --arg build_date "$BUILD_DATE" \  
-   -f <(echo "$JQ_PROGRAM_STRING") \  
+   "$JQ_PROGRAM_STRING" \  
    "${VERSION_FILE}" > "${VERSION_FILE_TMP}"  
   
 JQ_EXIT_CODE=$?  
-  
+
 if [ $JQ_EXIT_CODE -ne 0 ]; then  
   echo "::error title=jq command failed::jq processing of '$VERSION_FILE' failed with exit code $JQ_EXIT_CODE."  
   if [ -s "${VERSION_FILE_TMP}" ]; then  
