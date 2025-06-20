@@ -26,65 +26,12 @@ jobs:
       - name: Install jq (for JSON manipulation)
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Update version.json  
-        id: update_version  
+      - name: Update version.json via script  
         run: |  
-          set -e # Exit immediately if a command exits with a non-zero status.  
-          # set -x # Uncomment for extreme debug: prints every command executed  
-          VERSION_INPUT="${{ github.event.inputs.version }}"  
-          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') # UTC ISO 8601 format  
-          VERSION_FILE="public/version.json"  
-          VERSION_FILE_TMP="${VERSION_FILE}.tmp"  
-          echo "Using jq version: $(jq --version)"  
-          echo "Validating version input: $VERSION_INPUT"  
-          # Validate version format (SemVer-like)  
-          if ! [[ "$VERSION_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$ ]]; then  
-            echo "::error title=Invalid Version Format::Version '$VERSION_INPUT' does not look like SemVer (e.g., 1.2.3, 1.0.0-alpha)."  
-            exit 1  
-          fi  
-          echo "Ensuring directory for $VERSION_FILE exists..."  
-          mkdir -p "$(dirname "$VERSION_FILE")"  
-          echo "Checking $VERSION_FILE..."  
-          # If file doesn't exist or is not valid JSON, initialize it.  
-          # `jq -e . filename` checks if filename contains valid JSON (returns 0 if valid, non-zero otherwise).  
-          if [ ! -f "$VERSION_FILE" ] || ! jq -e . "$VERSION_FILE" > /dev/null 2>&1; then  
-            echo "$VERSION_FILE is missing or not valid JSON. Initializing with a default structure."  
-            echo '{ "version": "0.0.0", "buildDate": "0000-00-00T00:00:00Z" }' > "$VERSION_FILE"  
-          fi  
-          echo "Current content of $VERSION_FILE before update:"  
-          cat "$VERSION_FILE"  
-          echo "Updating $VERSION_FILE to version: $VERSION_INPUT, buildDate: $BUILD_DATE"  
-          # Define the jq filter program as a shell variable.  
-          # The single quotes around the program are crucial for jq.  
-          JQ_FILTER_PROGRAM='.version = $new_version | .buildDate = $build_date'  
-          # For debugging: print the command that will be run by the shell.  
-          # Note: This echo will show $JQ_FILTER_PROGRAM as the literal variable name,  
-          #       the shell will expand it when the actual jq command is run.  
-          #       If `set -x` is active, the fully expanded command will be printed.  
-          echo "Preparing to execute jq with filter: ${JQ_FILTER_PROGRAM}"  
-          # Execute jq.  
-          # Pass the filter program as a quoted string to ensure it's a single argument.  
-          # Also quote file paths for robustness.  
-          jq --arg new_version "$VERSION_INPUT" \  
-             --arg build_date "$BUILD_DATE" \  
-             "${JQ_FILTER_PROGRAM}" \  
-             "${VERSION_FILE}" > "${VERSION_FILE_TMP}"  
-          # Check if jq command succeeded (exit code 0)  
-          JQ_EXIT_CODE=$?  
-          if [ $JQ_EXIT_CODE -ne 0 ]; then  
-            echo "::error title=jq command failed::jq processing of $VERSION_FILE failed with exit code $JQ_EXIT_CODE."  
-            # If the temporary file exists and has content, it might be an error message from jq itself or partial output.  
-            if [ -s "${VERSION_FILE_TMP}" ]; then  
-                echo "Content of temporary file after failed jq attempt:"  
-                cat "${VERSION_FILE_TMP}"  
-            fi  
-            rm -f "${VERSION_FILE_TMP}" # Clean up the temporary file on error  
-            exit 1 # Exit the script due to jq failure  
-          fi  
-          # If jq succeeded, move the temporary file to the final destination.  
-          mv "${VERSION_FILE_TMP}" "${VERSION_FILE}"  
-          echo "Successfully updated $VERSION_FILE. New content:"  
-          cat "$VERSION_FILE"  
+          # Ensure script is executable (belt-and-suspenders if not set in git)  
+          chmod +x .github/scripts/update_version_json.sh  
+          # Execute the script, passing the version from workflow input  
+          .github/scripts/update_version_json.sh "${{ github.event.inputs.version }}"  
 
       - name: Configure Git
         run: |
