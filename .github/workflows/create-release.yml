@@ -1,71 +1,56 @@
-# .github/workflows/create-release.yml
-name: Create Release
-
-on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'New version number (e.g., 1.2.3)'
-        required: true
-        type: string
-
-permissions:
-  contents: write # To push commits, create tags, and releases
-  # pull-requests: read # Potentially needed if release notes generation depends on PR data explicitly
-
-jobs:
-  cut-release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          # persist-credentials: false # Not strictly needed if using GITHUB_TOKEN for all git operations by the action
-          token: ${{ secrets.GITHUB_TOKEN }} # Ensures checkout uses a token that can trigger subsequent workflow runs if needed
-
-      - name: Install jq (for JSON manipulation)
-        run: sudo apt-get update && sudo apt-get install -y jq
-
+name: Create Release  
+  
+on:  
+  workflow_dispatch:  
+    inputs:  
+      version:  
+        description: 'New version number (e.g., 1.2.3)'  
+        required: true  
+        type: string  
+  
+permissions:  
+  contents: write  
+  
+jobs:  
+  cut-release:  
+    runs-on: ubuntu-latest  
+    steps:  
+      - name: Checkout code  
+        uses: actions/checkout@v4  
+        with:  
+          token: ${{ secrets.GITHUB_TOKEN }}  
+  
+      - name: Setup Python  
+        uses: actions/setup-python@v5  
+        with:  
+          python-version: '3.x'  
+  
       - name: Update version.json via script  
         run: |  
-          # Ensure script is executable (belt-and-suspenders if not set in git)  
-          chmod +x .github/scripts/update_version_json.sh  
-          # Execute the script, passing the version from workflow input  
-          .github/scripts/update_version_json.sh "${{ github.event.inputs.version }}"  
-
-      - name: Configure Git
-        run: |
-          git config --global user.name "github-actions[bot]"  
+          python .github/scripts/update_version.py "${{ github.event.inputs.version }}"  
+  
+      - name: Configure Git  
+        run: |  
+          git config --global user.name "github-actions[bot]"    
           git config --global user.email "github-actions[bot]@users.noreply.github.com"  
-
-      - name: Commit and Push version.json
-        run: |
+  
+      - name: Commit and Push version.json  
+        run: |  
           git add public/version.json  
-          # Check if there are changes to commit  
           if git diff --staged --quiet; then  
             echo "No changes to commit in version.json."  
           else  
             git commit -m "chore: Release version ${{ github.event.inputs.version }}"  
-            # Use GITHUB_TOKEN for push  
-            # The ref needs to be the current branch, e.g. main or master  
-            # GITHUB_REF_NAME contains the branch name if the workflow runs on a branch  
-            echo "Pushing changes to branch ${{ github.ref_name }}"  
             git push origin ${{ github.ref_name }}  
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create GitHub Release and Tag
-        uses: softprops/action-gh-release@v2 # Using v2 as an example, check for latest stable
-        with:
-          tag_name: v${{ github.event.inputs.version }}
-          name: Release v${{ github.event.inputs.version }}
-          generate_release_notes: true # Automatically generate release notes
-          # body: | # Optional: If you want to prepend custom text to generated notes
-          #   Automated release for version ${{ github.event.inputs.version }}.
-          #   See below for automatically generated release notes.
-          # files: | # Optional: if you have build artifacts to upload
-          #   dist/*
-          #   my-asset.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          fi  
+        env:  
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  
+  
+      - name: Create GitHub Release and Tag  
+        uses: softprops/action-gh-release@v2  
+        with:  
+          tag_name: v${{ github.event.inputs.version }}  
+          name: Release v${{ github.event.inputs.version }}  
+          generate_release_notes: true  
+        env:  
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  
