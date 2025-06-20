@@ -2,7 +2,7 @@
 # .github/scripts/update_version_json.sh  
   
 set -e # Exit immediately if a command exits with a non-zero status.  
-set -x # Uncomment for extreme debug: prints every command executed  
+# set -x # Uncomment for extreme debug: prints every command executed  
   
 # Check if version argument is provided  
 if [ -z "$1" ]; then  
@@ -20,7 +20,7 @@ echo "--- Script: update_version_json.sh ---"
 echo "Input Version: $VERSION_INPUT"  
 echo "Build Date: $BUILD_DATE"  
 echo "Target File: $VERSION_FILE"  
-echo "jq version: $(jq --version)" # Good to keep for diagnostics  
+echo "jq version: $(jq --version)"  
 echo "--------------------------------------"  
   
 # Validate version format (SemVer-like)  
@@ -47,33 +47,32 @@ echo "Updating '$VERSION_FILE' to version: $VERSION_INPUT, buildDate: $BUILD_DAT
 # Define the jq program/filter as a shell variable  
 JQ_PROGRAM_STRING='.version = $new_version | .buildDate = $build_date'  
   
-echo "JQ Program String to be used: $JQ_PROGRAM_STRING"  
+echo "JQ Program String to be used: ${JQ_PROGRAM_STRING}"  
   
-# Execute jq, piping the program string to its stdin and using -f -  
-# This tells jq to read the program from its standard input.  
-echo "$JQ_PROGRAM_STRING" | jq --arg new_version "$VERSION_INPUT" \  
-                               --arg build_date "$BUILD_DATE" \  
-                               -f - \  
-                               "${VERSION_FILE}" > "${VERSION_FILE_TMP}"  
+# Execute jq using process substitution for the filter program.  
+# <(echo "$JQ_PROGRAM_STRING") will be replaced by a temporary file path (e.g., /dev/fd/63)  
+# containing the output of the echo command.  
+# All arguments for jq are now on one conceptual line for the shell after the process substitution.  
+jq --arg new_version "$VERSION_INPUT" \  
+   --arg build_date "$BUILD_DATE" \  
+   -f <(echo "$JQ_PROGRAM_STRING") \  
+   "${VERSION_FILE}" > "${VERSION_FILE_TMP}"  
   
 JQ_EXIT_CODE=$?  
   
 if [ $JQ_EXIT_CODE -ne 0 ]; then  
   echo "::error title=jq command failed::jq processing of '$VERSION_FILE' failed with exit code $JQ_EXIT_CODE."  
-  # If the temporary file exists and has content, it might be an error message from jq itself or partial output.  
   if [ -s "${VERSION_FILE_TMP}" ]; then  
       echo "Content of temporary output file after failed jq attempt:"  
       cat "${VERSION_FILE_TMP}"  
   fi  
-  # Clean up the temporary output file on error.  
   if [ -f "${VERSION_FILE_TMP}" ]; then  
     rm -f "${VERSION_FILE_TMP}"  
     echo "Cleaned up temporary output file: ${VERSION_FILE_TMP}"  
   fi  
-  exit 1 # Exit the script due to jq failure  
+  exit 1  
 fi  
   
-# If jq succeeded, move the temporary file to the final destination.  
 mv "${VERSION_FILE_TMP}" "${VERSION_FILE}"  
   
 echo "Successfully updated '$VERSION_FILE'. New content:"  
