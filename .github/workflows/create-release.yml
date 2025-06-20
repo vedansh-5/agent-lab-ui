@@ -1,0 +1,86 @@
+# .github/workflows/create-release.yml
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'New version number (e.g., 1.2.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: write # To push commits, create tags, and releases
+  # pull-requests: read # Potentially needed if release notes generation depends on PR data explicitly
+
+jobs:
+  cut-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # persist-credentials: false # Not strictly needed if using GITHUB_TOKEN for all git operations by the action
+          token: ${{ secrets.GITHUB_TOKEN }} # Ensures checkout uses a token that can trigger subsequent workflow runs if needed
+
+      - name: Install jq (for JSON manipulation)
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Update version.json
+        id: update_version
+        run: |
+          VERSION_INPUT="${{ github.event.inputs.version }}"  
+          # Validate version format (simple check, can be more complex e.g. regex for SemVer)  
+          if ! [[ "$VERSION_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$ ]]; then  
+            echo "::error title=Invalid Version Format::Version '$VERSION_INPUT' does not look like SemVer (e.g., 1.2.3, 1.0.0-alpha)."  
+            exit 1  
+          fi  
+          
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') # UTC ISO 8601 format  
+          echo "Updating public/version.json to version: $VERSION_INPUT, buildDate: $BUILD_DATE"  
+          
+          # Create a temporary file for jq output, then replace original  
+          jq --arg new_version "$VERSION_INPUT" \  
+             --arg build_date "$BUILD_DATE" \  
+             '.version = $new_version | .buildDate = $build_date' \  
+             public/version.json > public/version.json.tmp && mv public/version.json.tmp public/version.json  
+          
+          echo "Updated public/version.json content:"  
+          cat public/version.json  
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"  
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"  
+
+      - name: Commit and Push version.json
+        run: |
+          git add public/version.json  
+          # Check if there are changes to commit  
+          if git diff --staged --quiet; then  
+            echo "No changes to commit in version.json."  
+          else  
+            git commit -m "chore: Release version ${{ github.event.inputs.version }}"  
+            # Use GITHUB_TOKEN for push  
+            # The ref needs to be the current branch, e.g. main or master  
+            # GITHUB_REF_NAME contains the branch name if the workflow runs on a branch  
+            echo "Pushing changes to branch ${{ github.ref_name }}"  
+            git push origin ${{ github.ref_name }}  
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release and Tag
+        uses: softprops/action-gh-release@v2 # Using v2 as an example, check for latest stable
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: Release v${{ github.event.inputs.version }}
+          generate_release_notes: true # Automatically generate release notes
+          # body: | # Optional: If you want to prepend custom text to generated notes
+          #   Automated release for version ${{ github.event.inputs.version }}.
+          #   See below for automatically generated release notes.
+          # files: | # Optional: if you have build artifacts to upload
+          #   dist/*
+          #   my-asset.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
