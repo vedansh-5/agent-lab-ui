@@ -2,7 +2,7 @@
 # .github/scripts/update_version_json.sh  
   
 set -e # Exit immediately if a command exits with a non-zero status.  
-# set -x # Uncomment for extreme debug: prints every command executed  
+set -x # Uncomment for extreme debug: prints every command executed  
   
 # Check if version argument is provided  
 if [ -z "$1" ]; then  
@@ -15,18 +15,14 @@ BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') # UTC ISO 8601 format
 # Paths are relative to the GITHUB_WORKSPACE (repository root)  
 VERSION_FILE="public/version.json"  
 VERSION_FILE_TMP="${VERSION_FILE}.tmp"  
-# Place temporary jq filter file in a less conspicuous place or ensure it has a unique name if parallel runs were possible  
-JQ_FILTER_FILE=".jq_filter_temp_$(date +%s%N)"  
-  
   
 echo "--- Script: update_version_json.sh ---"  
 echo "Input Version: $VERSION_INPUT"  
 echo "Build Date: $BUILD_DATE"  
 echo "Target File: $VERSION_FILE"  
+echo "jq version: $(jq --version)" # Good to keep for diagnostics  
 echo "--------------------------------------"  
   
-echo "Using jq version: $(jq --version)"  
-echo "Validating version input: '$VERSION_INPUT'"  
 # Validate version format (SemVer-like)  
 if ! [[ "$VERSION_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$ ]]; then  
   echo "::error title=Invalid Version Format::Version '$VERSION_INPUT' does not look like SemVer (e.g., 1.2.3, 1.0.0-alpha)."  
@@ -48,26 +44,19 @@ cat "$VERSION_FILE"
   
 echo "Updating '$VERSION_FILE' to version: $VERSION_INPUT, buildDate: $BUILD_DATE"  
   
-# Write the jq filter program to a file.  
-# Note: $new_version and $build_date are jq variables, not shell variables here.  
-echo '.version = $new_version | .buildDate = $build_date' > "${JQ_FILTER_FILE}"  
+# Define the jq program/filter as a shell variable  
+JQ_PROGRAM_STRING='.version = $new_version | .buildDate = $build_date'  
   
-echo "Contents of filter file ('${JQ_FILTER_FILE}'):"  
-cat "${JQ_FILTER_FILE}"  
+echo "JQ Program String to be used: $JQ_PROGRAM_STRING"  
   
-# Execute jq using the filter file.  
-jq --arg new_version "$VERSION_INPUT" \  
-   --arg build_date "$BUILD_DATE" \  
-   --from-file "${JQ_FILTER_FILE}" \  
-   "${VERSION_FILE}" > "${VERSION_FILE_TMP}"  
+# Execute jq, piping the program string to its stdin and using -f -  
+# This tells jq to read the program from its standard input.  
+echo "$JQ_PROGRAM_STRING" | jq --arg new_version "$VERSION_INPUT" \  
+                               --arg build_date "$BUILD_DATE" \  
+                               -f - \  
+                               "${VERSION_FILE}" > "${VERSION_FILE_TMP}"  
   
 JQ_EXIT_CODE=$?  
-# It's good practice to remove the filter file as soon as it's not needed.  
-if [ -f "${JQ_FILTER_FILE}" ]; then  
-  rm -f "${JQ_FILTER_FILE}"  
-  echo "Cleaned up temporary filter file: ${JQ_FILTER_FILE}"  
-fi  
-  
   
 if [ $JQ_EXIT_CODE -ne 0 ]; then  
   echo "::error title=jq command failed::jq processing of '$VERSION_FILE' failed with exit code $JQ_EXIT_CODE."  
