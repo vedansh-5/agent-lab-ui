@@ -135,12 +135,12 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         else:
             logger.warn(f"WatsonX project_id not found for agent {adk_agent_name}. This might be required.")
             # Pass space_id for deployed models if applicable (not directly handled here, assumed in model string or context)
-        if base_model_name_from_config.startswith("deployment/"):
+        if base_model_name_from_config.startswith("deployment/"): # Check if it's a deployment model
             space_id_for_watsonx = agent_config.get("space_id") or os.getenv("WATSONX_DEPLOYMENT_SPACE_ID")
             if space_id_for_watsonx:
-                model_constructor_kwargs["space_id"] = space_id_for_watsonx
+                model_constructor_kwargs["space_id"] = space_id_for_watsonx # Pass space_id for deployments
             else:
-                logger.warn(f"WatsonX deployment model used for {adk_agent_name} but space_id not found.")
+                logger.warn(f"WatsonX deployment model used for {adk_agent_name} but space_id not found. Deployment may fail or use default space.")
 
 
     actual_model_for_adk = LiteLlm(**model_constructor_kwargs)
@@ -334,7 +334,7 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
                     # Ensure child_config has necessary fields or default them
                     if 'selectedProviderId' not in child_config:
                         logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'selectedProviderId'. Defaulting.")
-                        child_config['selectedProviderId'] = BACKEND_LITELLM_PROVIDER_CONFIG.get("openai") # Example default
+                        child_config['selectedProviderId'] = "openai" # Example default
                     if 'litellm_model_string' not in child_config:
                         logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'litellm_model_string'. Defaulting.")
                         # Add intelligent defaulting for model_string based on child_config['selectedProviderId'] if possible
@@ -406,4 +406,4 @@ __all__ = [
     'instantiate_tool',
     'sanitize_adk_agent_name',
     'instantiate_adk_agent_from_config'
-]
+]  
