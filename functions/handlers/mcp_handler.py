@@ -3,7 +3,10 @@ import asyncio
 import traceback
 from firebase_functions import https_fn
 from mcp.client.sse import sse_client
+from mcp.client.session import ClientSession
 from common.core import logger
+from mcp.client.streamable_http import streamablehttp_client
+
 
 async def _list_mcp_server_tools_logic_async(req: https_fn.CallableRequest):
     if not req.auth:
@@ -22,30 +25,38 @@ async def _list_mcp_server_tools_logic_async(req: https_fn.CallableRequest):
     logger.info(f"Attempting to list tools from MCP server: {server_url}")
 
     try:
-        async with sse_client(base_url=server_url) as mcp_client:
-            # Ensure connect() is called if MCPClientSession doesn't auto-connect
-            # await mcp_client.connect() # This might not be needed depending on MCPClientSession impl.
+        ## Auth can/will go here as well.
+        async with streamablehttp_client(url=server_url) as (
+                read_stream,
+                write_stream,
+                _,
+        ):
+            logger.info(f"Connected to MCP server at {server_url} using Streamable HTTP client.")
+            async with ClientSession(read_stream, write_stream) as mcp_client:
+                logger.info("Client session established with MCP server.")
+                # Ensure connect() is called if MCPClientSession doesn't auto-connect
+                # await mcp_client.connect() # This might not be needed depending on MCPClientSession impl.
+                await mcp_client.initialize()
+                mcp_server_tools = await mcp_client.list_tools()
+                logger.info(f"Retrieved {len(mcp_server_tools.tools)} tools from MCP server: {server_url}")
+                # The mcp_server_tools will be a list of mcp.common.Tool objects
+                # We need to serialize them into a JSON-friendly format for the client.
+                # A Tool object has attributes like 'name', 'description', 'input_schema', 'output_schema'.
+                # Schemas are Pydantic models, so .model_dump_json() or .model_dump() can be used.
 
-            mcp_server_tools = await mcp_client.list_tools()
-
-            # The mcp_server_tools will be a list of mcp.common.Tool objects
-            # We need to serialize them into a JSON-friendly format for the client.
-            # A Tool object has attributes like 'name', 'description', 'input_schema', 'output_schema'.
-            # Schemas are Pydantic models, so .model_dump_json() or .model_dump() can be used.
-
-            tools_for_client = []
-            for tool_obj in mcp_server_tools:
-                tools_for_client.append({
-                    "name": tool_obj.name,
-                    "description": tool_obj.description,
-                    # Decide if schemas are needed by UI. If so, serialize them.
-                    # "input_schema_json": tool_obj.input_schema.model_dump_json() if tool_obj.input_schema else None,
-                    # "output_schema_json": tool_obj.output_schema.model_dump_json() if tool_obj.output_schema else None,
-                    # For now, UI primarily needs name and description for selection.
-                    # The backend will use the original tool name for filtering when creating MCPToolset.
-                })
-            logger.info(f"Successfully listed {len(tools_for_client)} tools from MCP server: {server_url}")
-            return {"success": True, "tools": tools_for_client, "serverUrl": server_url}
+                tools_for_client = []
+                for tool_obj in mcp_server_tools.tools:
+                    tools_for_client.append({
+                        "name": tool_obj.name,
+                        "description": tool_obj.description,
+                        # Decide if schemas are needed by UI. If so, serialize them.
+                        # "input_schema_json": tool_obj.input_schema.model_dump_json() if tool_obj.input_schema else None,
+                        # "output_schema_json": tool_obj.output_schema.model_dump_json() if tool_obj.output_schema else None,
+                        # For now, UI primarily needs name and description for selection.
+                        # The backend will use the original tool name for filtering when creating MCPToolset.
+                    })
+                logger.info(f"Successfully listed {len(tools_for_client)} tools from MCP server: {server_url}")
+                return {"success": True, "tools": tools_for_client, "serverUrl": server_url}
 
     except ConnectionRefusedError:
         logger.error(f"Connection refused by MCP server at {server_url}.")

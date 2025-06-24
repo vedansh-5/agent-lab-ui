@@ -77,8 +77,8 @@ def process_pdf_content(req: https_fn.CallableRequest):
     return _process_pdf_content_logic(req)
 
 # New Function for MCP Tools
-@https_fn.on_call(memory=options.MemoryOption.MB_512, timeout_sec=120) # Increased timeout for potential network calls
+@https_fn.on_call(memory=options.MemoryOption.GB_1, timeout_sec=120) # Increased timeout for potential network calls
 @handle_exceptions_and_log
 def list_mcp_server_tools(req: https_fn.CallableRequest):
     # _list_mcp_server_tools_logic_async is async, so we need to run it in an event loop
-    return asyncio.run(_list_mcp_server_tools_logic_async(req))  
+    return asyncio.run(_list_mcp_server_tools_logic_async(req))
