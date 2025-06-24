@@ -1,6 +1,6 @@
 rules_version = '2';  
-service cloud.firestore {  
-  match /databases/{database}/documents {  
+service cloud.firestore {
+  match /databases/{database}/documents {
 
     // --- Users Collection ---
     match /users/{userId} {
@@ -58,21 +58,8 @@ service cloud.firestore {
 
       // Admin can list all.
       // Users can list their own agents OR public agents. Client makes separate queries.
-      allow list: if isAdmin() || (
-                     request.auth.uid != null &&
-                     request.query.resource.__name__[0] == 'projects' && // General sanity check
-                     request.query.filters.size() > 0 && (
-                       // Querying own agents
-                       (request.query.filters[0].fieldPath == "userId" &&
-                        request.query.filters[0].op == "==" &&
-                        request.query.filters[0].value == request.auth.uid)
-                       ||
-                       // Querying public agents
-                       (request.query.filters[0].fieldPath == "isPublic" &&
-                        request.query.filters[0].op == "==" &&
-                        request.query.filters[0].value == true)
-                     )
-                   );
+      allow list: if isOwner(resource.data) || isAgentPublic();
+
 
       // Owner can update their agent's config fields including 'isPublic'.
       // Admin can update agent's config fields, 'isPublic', and deployment fields.
