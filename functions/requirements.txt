@@ -8,5 +8,6 @@ google-cloud-logging>=3.0.0
 litellm>=1.72.0
 PyPDF>=5.6.0
 PyGithub
-mcp>=1.9.4
+#mcp>=1.9.4 # required functionality coming in 1.9.5
+git+https://github.com/modelcontextprotocol/python-sdk
 aiohttp

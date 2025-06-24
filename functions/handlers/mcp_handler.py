@@ -1,11 +1,15 @@
-# functions/handlers/mcp_handler.py (New File)
+# functions/handlers/mcp_handler.py
 import asyncio
 import traceback
+
+import httpx # Import for specific httpx exceptions
 from firebase_functions import https_fn
-from mcp.client.sse import sse_client
+
 from mcp.client.session import ClientSession
+from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client # Import StreamableHTTP client
+from mcp.shared.metadata_utils import get_display_name
 from common.core import logger
-from mcp.client.streamable_http import streamablehttp_client
 
 
 async def _list_mcp_server_tools_logic_async(req: https_fn.CallableRequest):
@@ -24,51 +28,91 @@ async def _list_mcp_server_tools_logic_async(req: https_fn.CallableRequest):
 
     logger.info(f"Attempting to list tools from MCP server: {server_url}")
 
+    client_context_manager = None
+    transport_description = ""
+
+    # Determine which client to use based on the URL
+    if server_url.endswith("/sse"):
+        # For URLs specifically ending in /sse, use the sse_client
+        client_context_manager = sse_client(url=server_url)
+        transport_description = "SSE"
+    else:
+        # Default to StreamableHTTP for other URLs (e.g., ending in /mcp or unspecified)
+        client_context_manager = streamablehttp_client(url=server_url)
+        transport_description = "StreamableHTTP"
+
+    logger.info(f"Attempting to connect to MCP server at {server_url} using {transport_description} client.")
+
     try:
-        ## Auth can/will go here as well.
-        async with streamablehttp_client(url=server_url) as (
-                read_stream,
-                write_stream,
-                _,
-        ):
-            logger.info(f"Connected to MCP server at {server_url} using Streamable HTTP client.")
+        async with client_context_manager as client_streams_tuple:
+            if transport_description == "SSE":
+                read_stream, write_stream = client_streams_tuple
+            else:  # StreamableHTTP
+                read_stream, write_stream, _get_session_id = client_streams_tuple
+                # _get_session_id is available if needed for StreamableHTTP, but not used here.
+
+            logger.info(f"Connection established via {transport_description} client.")
             async with ClientSession(read_stream, write_stream) as mcp_client:
                 logger.info("Client session established with MCP server.")
-                # Ensure connect() is called if MCPClientSession doesn't auto-connect
-                # await mcp_client.connect() # This might not be needed depending on MCPClientSession impl.
                 await mcp_client.initialize()
+
                 mcp_server_tools = await mcp_client.list_tools()
                 logger.info(f"Retrieved {len(mcp_server_tools.tools)} tools from MCP server: {server_url}")
-                # The mcp_server_tools will be a list of mcp.common.Tool objects
-                # We need to serialize them into a JSON-friendly format for the client.
-                # A Tool object has attributes like 'name', 'description', 'input_schema', 'output_schema'.
-                # Schemas are Pydantic models, so .model_dump_json() or .model_dump() can be used.
 
                 tools_for_client = []
-                for tool_obj in mcp_server_tools.tools:
+                for tool_obj in mcp_server_tools.tools: # tool_obj is of type mcp.types.Tool
                     tools_for_client.append({
                         "name": tool_obj.name,
                         "description": tool_obj.description,
-                        # Decide if schemas are needed by UI. If so, serialize them.
-                        # "input_schema_json": tool_obj.input_schema.model_dump_json() if tool_obj.input_schema else None,
-                        # "output_schema_json": tool_obj.output_schema.model_dump_json() if tool_obj.output_schema else None,
-                        # For now, UI primarily needs name and description for selection.
-                        # The backend will use the original tool name for filtering when creating MCPToolset.
+                        "title": get_display_name(tool_obj), # Use get_display_name here
+                        "input_schema": tool_obj.inputSchema
                     })
                 logger.info(f"Successfully listed {len(tools_for_client)} tools from MCP server: {server_url}")
                 return {"success": True, "tools": tools_for_client, "serverUrl": server_url}
 
+    except httpx.HTTPStatusError as e: # Specific error for HTTP status issues (4xx, 5xx)
+        logger.error(f"HTTP error {e.response.status_code} while communicating with MCP server at {server_url}: {e.response.text[:200]}")
+        # Map HTTP status codes to Firebase error codes more granularly if needed
+        firebase_error_code = https_fn.FunctionsErrorCode.UNAVAILABLE
+        if 400 <= e.response.status_code < 500:
+            firebase_error_code = https_fn.FunctionsErrorCode.INVALID_ARGUMENT # Or FAILED_PRECONDITION, etc.
+        elif 500 <= e.response.status_code < 600:
+            firebase_error_code = https_fn.FunctionsErrorCode.INTERNAL
+
+        raise https_fn.HttpsError(
+            code=firebase_error_code,
+            message=f"MCP server at {server_url} returned HTTP error {e.response.status_code}."
+        )
+    except httpx.RequestError as e: # General httpx network errors (ConnectTimeout, ReadTimeout, etc.)
+        logger.error(f"Network error while communicating with MCP server at {server_url}: {type(e).__name__} - {e}")
+        if isinstance(e, httpx.ConnectTimeout):
+            code = https_fn.FunctionsErrorCode.DEADLINE_EXCEEDED
+            msg = f"Connection to MCP server at {server_url} timed out."
+        elif isinstance(e, httpx.ReadTimeout):
+            code = https_fn.FunctionsErrorCode.DEADLINE_EXCEEDED
+            msg = f"Reading from MCP server at {server_url} timed out."
+        elif isinstance(e, httpx.ConnectError): # More specific than ConnectionRefusedError for httpx
+            code = https_fn.FunctionsErrorCode.UNAVAILABLE
+            msg = f"Could not connect to MCP server at {server_url}. Server might be down or URL incorrect."
+        else:
+            code = https_fn.FunctionsErrorCode.UNAVAILABLE
+            msg = f"Network error connecting to MCP server at {server_url}."
+        raise https_fn.HttpsError(code=code, message=msg)
+        # ConnectionRefusedError might be caught by httpx.ConnectError above if httpx is used internally.
+    # Keeping it for now as a fallback or if other libraries raise it.
     except ConnectionRefusedError:
         logger.error(f"Connection refused by MCP server at {server_url}.")
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.UNAVAILABLE,
             message=f"Could not connect to MCP server at {server_url}. Server might be down or URL incorrect."
         )
-    except asyncio.TimeoutError: # If mcp_client methods have timeouts
-        logger.error(f"Timeout while communicating with MCP server at {server_url}.")
+        # The generic asyncio.TimeoutError might be less common now with specific httpx timeouts.
+    # It's kept as a fallback.
+    except asyncio.TimeoutError:
+        logger.error(f"A general timeout occurred while communicating with MCP server at {server_url}.")
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.DEADLINE_EXCEEDED,
-            message=f"Request to MCP server at {server_url} timed out."
+            message=f"An operation with MCP server at {server_url} timed out."
         )
     except Exception as e:
         logger.error(f"Error listing tools from MCP server {server_url}: {e}\n{traceback.format_exc()}", exc_info=True)
@@ -77,8 +121,6 @@ async def _list_mcp_server_tools_logic_async(req: https_fn.CallableRequest):
             message=f"An unexpected error occurred while listing tools from MCP server: {str(e)[:200]}"
         )
 
-    # Wrapper for Firebase Functions if needed (e.g. if main.py calls a sync version)
-# For direct async call from main.py, this specific wrapper isn't strictly necessary there.
 def _list_mcp_server_tools_logic(req: https_fn.CallableRequest):
     return asyncio.run(_list_mcp_server_tools_logic_async(req))
 
