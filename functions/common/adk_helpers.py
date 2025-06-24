@@ -8,6 +8,8 @@ from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent #
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.models.lite_llm import LiteLlm
 from google.genai import types as genai_types # For GenerateContentConfig
+from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import SseServerParams
 
 # This mapping helps the backend determine LiteLLM prefixes and expected API key env vars.
 # It's a simplified version of what was in PYTHON_AGENT_CONSTANTS before,
@@ -34,142 +36,143 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
     logger.info(f"Preparing kwargs for ADK agent '{adk_agent_name}' {context_for_log}. Original config name: '{agent_config.get('name', 'N/A')}'")
 
     instantiated_tools = []
+    mcp_tools_by_server = {} # {'server_url_1': ['tool_name_A', 'tool_name_B'], ...}
     user_defined_tools_config = agent_config.get("tools", [])
+
     for tc_idx, tc in enumerate(user_defined_tools_config):
+        tool_type = tc.get('type')
+        if tool_type == 'mcp':
+            server_url = tc.get('mcpServerUrl')
+            tool_name_on_server = tc.get('mcpToolName') # Original name on MCP server
+            if server_url and tool_name_on_server:
+                if server_url not in mcp_tools_by_server:
+                    mcp_tools_by_server[server_url] = []
+                mcp_tools_by_server[server_url].append(tool_name_on_server)
+                logger.info(f"Queued MCP tool '{tool_name_on_server}' from server '{server_url}' for agent '{adk_agent_name}'.")
+            else:
+                logger.warn(f"Skipping MCP tool for agent '{adk_agent_name}' due to missing mcpServerUrl or mcpToolName: {tc}")
+                # Removed ADK built-in tool handling here, as they are no longer selectable from UI in this manner
+        # Gofannon and custom_repo tools are handled by instantiate_tool
+        elif tool_type == 'gofannon' or tool_type == 'custom_repo':
+            try:
+                tool_instance = instantiate_tool(tc) # instantiate_tool now only handles Gofannon/custom_repo
+                instantiated_tools.append(tool_instance)
+                logger.info(f"Successfully instantiated tool '{tc.get('id', f'index_{tc_idx}')}' (type: {tool_type}) for agent '{adk_agent_name}'.")
+            except ValueError as e:
+                logger.warn(f"Skipping tool for agent '{adk_agent_name}' due to error: {e} (Tool config: {tc.get('id', f'index_{tc_idx}')}, Type: {tool_type})")
+        else:
+            logger.warn(f"Unknown or unhandled tool type '{tool_type}' for agent '{adk_agent_name}'. Tool config: {tc}")
+
+
+            # After iterating all tool_configs, create MCPToolset instances
+    for server_url, tool_names_filter in mcp_tools_by_server.items():
         try:
-            tool_instance = instantiate_tool(tc)
-            instantiated_tools.append(tool_instance)
-            logger.info(f"Successfully instantiated tool '{tc.get('id', f'index_{tc_idx}')}' for agent '{adk_agent_name}'.")
-        except ValueError as e:
-            logger.warn(f"Skipping tool for agent '{adk_agent_name}' due to error: {e} (Tool config: {tc.get('id', f'index_{tc_idx}')})")
+            # MCPToolset expects SseServerParams for URL-based connections.
+            # Ensure SseServerParams is imported.
+            mcp_toolset = MCPToolset(
+                connection_params=SseServerParams(url=server_url),
+                tool_filter=list(set(tool_names_filter)) # Use unique tool names for filter
+            )
+            instantiated_tools.append(mcp_toolset)
+            logger.info(f"Added MCPToolset for server '{server_url}' to agent '{adk_agent_name}' with {len(set(tool_names_filter))} unique tools filtered: {list(set(tool_names_filter))}.")
+        except Exception as e_mcp_toolset:
+            logger.error(f"Failed to create MCPToolset for server '{server_url}' for agent '{adk_agent_name}': {e_mcp_toolset}")
+            # Optionally, re-raise or add a placeholder error tool if critical
+
 
     selected_provider_id = agent_config.get("selectedProviderId")
-    # `litellm_model_string` from frontend:
-    # - For standard providers: It's the base model name (e.g., "gpt-4o", "claude-3-opus-20240229").
-    # - For "custom" or "openai_compatible": It's the full model string (e.g., "ollama/mistral", "my-custom-model").
-    # - For "azure": It's the deployment name (e.g., "my-gpt4-deployment").
     base_model_name_from_config = agent_config.get("litellm_model_string")
     user_api_base_override = agent_config.get("litellm_api_base")
     user_api_key_override = agent_config.get("litellm_api_key")
 
     if not selected_provider_id:
-        # Attempt to infer, though frontend should always send this now.
         logger.warn(f"Missing 'selectedProviderId' in agent config '{agent_config.get('name', 'N/A')}' {context_for_log}. This is unexpected. Attempting fallback inference.")
         if base_model_name_from_config:
             if "gpt" in base_model_name_from_config.lower(): selected_provider_id = "openai"
             elif "gemini" in base_model_name_from_config.lower(): selected_provider_id = "google_ai_studio"
             elif "claude" in base_model_name_from_config.lower(): selected_provider_id = "anthropic"
-            # Add more inference rules if necessary
         if not selected_provider_id :
-            selected_provider_id = "custom" # Safest fallback if truly unknown
+            selected_provider_id = "custom"
             logger.warn(f"Could not infer provider. Defaulting to '{selected_provider_id}'. Model string '{base_model_name_from_config}' will be used as is.")
 
     if not base_model_name_from_config and selected_provider_id != "custom" and selected_provider_id != "openai_compatible":
-        # This should ideally not happen if frontend defaults correctly.
         logger.warn(f"Missing 'litellm_model_string' for provider '{selected_provider_id}'. This may lead to errors.")
-        # Assign a very generic default or raise error, depending on strictness.
-        # For now, let it proceed, LiteLLM might have global defaults or raise error.
 
     provider_backend_config = BACKEND_LITELLM_PROVIDER_CONFIG.get(selected_provider_id)
     if not provider_backend_config:
         logger.error(f"Invalid 'selectedProviderId': {selected_provider_id}. Cannot determine LiteLLM prefix or API key for agent '{adk_agent_name}'.")
         raise ValueError(f"Invalid provider ID: {selected_provider_id}")
 
-        # Construct the final model string for LiteLLM
     final_model_str_for_litellm = base_model_name_from_config
     if provider_backend_config["prefix"]:
-        # Only prepend if it's not already prefixed (e.g., user entered "openai/gpt-4o" for custom type)
-        # and the base_model_name_from_config itself doesn't already contain a "/" which might indicate
-        # a user attempting to use a fully qualified name with a standard provider.
-        # Azure is special: prefix is "azure", model name is deployment name.
         if selected_provider_id == "azure":
             if not base_model_name_from_config.startswith("azure/"):
                 final_model_str_for_litellm = f"azure/{base_model_name_from_config}"
         elif not base_model_name_from_config.startswith(provider_backend_config["prefix"] + "/"):
             final_model_str_for_litellm = f"{provider_backend_config['prefix']}/{base_model_name_from_config}"
-            # For "custom" or "openai_compatible" (prefix: null or "openai"), final_model_str_for_litellm is used as is from base_model_name_from_config
 
-    # Determine API Base
-    final_api_base = user_api_base_override # User override takes precedence
-
-    # Determine API Key
-    final_api_key = user_api_key_override # User override takes precedence
+    final_api_base = user_api_base_override
+    final_api_key = user_api_key_override
     if not final_api_key and provider_backend_config["apiKeyEnv"]:
         final_api_key = os.getenv(provider_backend_config["apiKeyEnv"])
-        if not final_api_key and provider_backend_config["apiKeyEnv"] not in ["AWS_ACCESS_KEY_ID", "WATSONX_APIKEY"]: # Bedrock/WatsonX have complex auth
+        if not final_api_key and provider_backend_config["apiKeyEnv"] not in ["AWS_ACCESS_KEY_ID", "WATSONX_APIKEY"]:
             logger.warn(f"API key env var '{provider_backend_config['apiKeyEnv']}' for provider '{selected_provider_id}' not set, and no override provided. LiteLLM may fail if key is required by the provider or its default configuration.")
 
-            # Special handling for Azure provider specific environment variables
     if selected_provider_id == "azure":
         if not os.getenv("AZURE_API_BASE") and not final_api_base:
             logger.error("Azure provider selected, but AZURE_API_BASE is not set in environment and no API Base override provided. LiteLLM will likely fail.")
         if not os.getenv("AZURE_API_VERSION"):
             logger.warn("Azure provider selected, but AZURE_API_VERSION is not set in environment. LiteLLM may require it.")
-            # LiteLLM handles picking these up from env if api_base/api_key aren't passed to LiteLlm constructor
 
-    # Special handling for WatsonX
     if selected_provider_id == "watsonx":
-        if not os.getenv("WATSONX_URL") and not final_api_base: # User can override WATSONX_URL via api_base
+        if not os.getenv("WATSONX_URL") and not final_api_base:
             logger.error("WatsonX provider: WATSONX_URL env var not set and not overridden by user. LiteLLM will likely fail.")
-        if not os.getenv("WATSONX_PROJECT_ID") and not agent_config.get("project_id"): # project_id can be passed in agent_config
+        if not os.getenv("WATSONX_PROJECT_ID") and not agent_config.get("project_id"):
             logger.warn("WatsonX provider: WATSONX_PROJECT_ID env var not set and no project_id in agent_config. LiteLLM may require it.")
 
-
     logger.info(f"Configuring LiteLlm for agent '{adk_agent_name}' (Provider: {selected_provider_id}): "
-                f"Model='{final_model_str_for_litellm}', API Base='{final_api_base or 'Default/Env'}', KeyIsSet={(not not final_api_key) or (selected_provider_id in ['bedrock', 'watsonx'])}") # Bedrock/WatsonX use SDK auth
+                f"Model='{final_model_str_for_litellm}', API Base='{final_api_base or 'Default/Env'}', KeyIsSet={(not not final_api_key) or (selected_provider_id in ['bedrock', 'watsonx'])}")
 
-    # Instantiate LiteLlm model for ADK
-    # For Bedrock and WatsonX, LiteLLM's SDK integration handles credentials if api_key is None.
-    # For Azure, LiteLLM picks up AZURE_API_BASE, AZURE_API_KEY, AZURE_API_VERSION from env if not passed.
     model_constructor_kwargs = {"model": final_model_str_for_litellm}
     if final_api_base:
         model_constructor_kwargs["api_base"] = final_api_base
-    if final_api_key: # Only pass api_key if explicitly set or found from standard env var
+    if final_api_key:
         model_constructor_kwargs["api_key"] = final_api_key
 
-        # For watsonx, pass project_id if available
     if selected_provider_id == "watsonx":
         project_id_for_watsonx = agent_config.get("project_id") or os.getenv("WATSONX_PROJECT_ID")
         if project_id_for_watsonx:
             model_constructor_kwargs["project_id"] = project_id_for_watsonx
         else:
             logger.warn(f"WatsonX project_id not found for agent {adk_agent_name}. This might be required.")
-            # Pass space_id for deployed models if applicable (not directly handled here, assumed in model string or context)
-        if base_model_name_from_config.startswith("deployment/"): # Check if it's a deployment model
+        if base_model_name_from_config.startswith("deployment/"):
             space_id_for_watsonx = agent_config.get("space_id") or os.getenv("WATSONX_DEPLOYMENT_SPACE_ID")
             if space_id_for_watsonx:
-                model_constructor_kwargs["space_id"] = space_id_for_watsonx # Pass space_id for deployments
+                model_constructor_kwargs["space_id"] = space_id_for_watsonx
             else:
                 logger.warn(f"WatsonX deployment model used for {adk_agent_name} but space_id not found. Deployment may fail or use default space.")
 
-
     actual_model_for_adk = LiteLlm(**model_constructor_kwargs)
-
 
     agent_kwargs = {
         "name": adk_agent_name,
         "description": agent_config.get("description"),
         "model": actual_model_for_adk,
         "instruction": agent_config.get("instruction"),
-        "tools": instantiated_tools,
+        "tools": instantiated_tools, # This now includes MCPToolsets if any
         "output_key": agent_config.get("outputKey"),
-        # ADK's LiteLlm model does not directly take enable_code_execution.
-        # If needed, it would be part of tools or specific model capabilities.
     }
+    # Removed enableCodeExecution from here
 
-    model_settings = agent_config.get("modelSettings", {}) # UI sends this, ADK's LiteLLM model might not use all
+    model_settings = agent_config.get("modelSettings", {})
     current_generate_content_config_kwargs = {}
 
-    # Map common settings to LiteLLM compatible params if ADK's LiteLlm model accepts them
-    # Temperature and max_output_tokens are common. Top_p, top_k might need specific LiteLLM handling or pass-through.
     if "temperature" in model_settings and model_settings["temperature"] is not None:
-        try: agent_kwargs["temperature"] = float(model_settings["temperature"]) # LiteLlm model might take this
+        try: agent_kwargs["temperature"] = float(model_settings["temperature"])
         except (ValueError, TypeError): logger.warning(f"Invalid temperature: {model_settings['temperature']}")
     if "maxOutputTokens" in model_settings and model_settings["maxOutputTokens"] is not None:
-        try: agent_kwargs["max_tokens"] = int(model_settings["maxOutputTokens"]) # LiteLlm model might take this
+        try: agent_kwargs["max_tokens"] = int(model_settings["maxOutputTokens"])
         except (ValueError, TypeError): logger.warning(f"Invalid maxOutputTokens: {model_settings['maxOutputTokens']}")
-
-        # These are more Gemini-specific, LiteLLM might pass them through if the underlying provider supports.
     if "topP" in model_settings and model_settings["topP"] is not None:
         try: current_generate_content_config_kwargs["top_p"] = float(model_settings["topP"])
         except (ValueError, TypeError): logger.warning(f"Invalid topP: {model_settings['topP']}")
@@ -179,17 +182,9 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
     if "stopSequences" in model_settings and isinstance(model_settings["stopSequences"], list):
         current_generate_content_config_kwargs["stop_sequences"] = [str(seq) for seq in model_settings["stopSequences"]]
 
-        # If there are any Gemini-specific generation_config items, set them.
-    # Note: ADK's LiteLlm class might not directly use a GenerateContentConfig object.
-    # It's more likely to pass these as individual kwargs to litellm.completion.
-    # For now, we'll prepare them, but LiteLlm integration needs to handle them.
-    # The current ADK LiteLlm model seems to pass unknown kwargs to litellm.completion.
     if current_generate_content_config_kwargs:
-        # Instead of creating a GenerateContentConfig object, we'll merge these into agent_kwargs
-        # if the LiteLlm model in ADK passes them through to litellm.completion
         agent_kwargs.update(current_generate_content_config_kwargs)
         logger.info(f"Agent '{adk_agent_name}' has additional model parameters: {current_generate_content_config_kwargs}")
-
 
     return {k: v for k, v in agent_kwargs.items() if v is not None}
 
@@ -209,14 +204,21 @@ def generate_vertex_deployment_display_name(agent_config_name: str, agent_doc_id
     return deployment_display_name.strip('-')[:63]
 
 def instantiate_tool(tool_config):
-    logger.info(f"Attempting to instantiate tool: {tool_config.get('id', 'N/A')}")
+    # This function now only handles Gofannon and custom_repo tools.
+    # MCP tools are handled directly in _prepare_agent_kwargs_from_config to create MCPToolsets.
+    # ADK built-in tools (like google_search string) are removed.
+    logger.info(f"Attempting to instantiate Gofannon/Custom tool: {tool_config.get('id', 'N/A')}")
     if not isinstance(tool_config, dict):
         raise ValueError(f"Tool configuration must be a dictionary, got {type(tool_config)}")
 
     module_path = tool_config.get("module_path")
     class_name = tool_config.get("class_name")
+    tool_type = tool_config.get("type") # Should be 'gofannon' or 'custom_repo'
 
-    if module_path and class_name: # This indicates a Gofannon or custom_repo tool
+    if not (tool_type == 'gofannon' or tool_type == 'custom_repo'):
+        raise ValueError(f"instantiate_tool received unexpected tool type: {tool_type}. Expected 'gofannon' or 'custom_repo'.")
+
+    if module_path and class_name:
         try:
             module = importlib.import_module(module_path)
             ToolClass = getattr(module, class_name)
@@ -230,12 +232,12 @@ def instantiate_tool(tool_config):
 
             if hasattr(instance, 'export_to_adk') and callable(instance.export_to_adk):
                 adk_tool_spec = instance.export_to_adk()
-                tool_source_type = "Gofannon-compatible tool"
+                tool_source_type = "Gofannon-compatible tool" if tool_type == 'gofannon' else "Custom Repository tool"
                 logger.info(f"Successfully instantiated and exported {tool_source_type} '{tool_config.get('id', class_name)}' to ADK spec.")
                 return adk_tool_spec
-            else: # Assume it's a directly ADK-compatible tool object (e.g. Langchain Tool)
+            else:
                 logger.info(f"Successfully instantiated tool '{tool_config.get('id', class_name)}' (assumed ADK native or directly compatible).")
-                return instance # Return the instance itself if no export_to_adk
+                return instance
         except Exception as e:
             tool_id_for_log = tool_config.get('id', class_name or 'N/A')
             if isinstance(e, (ImportError, ModuleNotFoundError)):
@@ -243,29 +245,8 @@ def instantiate_tool(tool_config):
             else:
                 logger.error(f"Error instantiating tool '{tool_id_for_log}': {e}\n{traceback.format_exc()}")
             raise ValueError(f"Error instantiating tool {tool_id_for_log}: {e}")
-    else: # Handle ADK built-in tools or potentially other structures
-        tool_id = tool_config.get("id")
-        tool_type = tool_config.get("type") # This 'type' is from our UI's tool structure
-        if tool_id == 'google_search_adk' and tool_type == 'adk_builtin_search':
-            logger.info(f"Recognized ADK built-in Google Search tool config: {tool_id}")
-            return "google_search" # ADK expects this string for its built-in tool
-        elif tool_id == 'vertex_ai_search_adk' and tool_type == 'adk_builtin_vertex_search':
-            logger.info(f"Recognized ADK built-in Vertex AI Search tool config: {tool_id}")
-            # For Vertex AI Search, ADK might expect "vertex_ai_search" or a Tool object.
-            # Refer to ADK documentation for exact requirement. Assuming "vertex_ai_search" string for now.
-            # Configuration for datastore_id etc. would need to be handled, possibly by AgentTool.from_vertex_ai_search(...)
-            # This part needs confirmation from ADK's way of enabling its built-in Vertex AI Search tool.
-            # If it needs specific parameters, the tool_config should carry them.
-            # For now, returning the string identifier.
-            # Example: return AgentTool.from_vertex_ai_search(datastore_id="YOUR_DATASTORE_ID") -> if configuration is supported.
-            # If no config needed here by ADK, string is fine.
-            logger.warn("Vertex AI Search tool selected - datastore configuration is not yet supported in this UI for ADK. ADK might use a default or require env setup.")
-            return "vertex_ai_search"
-        else:
-            # This could be a scenario where the tool_config represents an already fully formed ADK tool object
-            # (e.g., from a JSON serialization of an AgentTool). This is less likely with current UI.
-            # Or it's an unrecognized configuration.
-            raise ValueError(f"Unsupported or incomplete tool configuration for tool ID '{tool_config.get('id', 'N/A')}' (type: {tool_type}). Missing Gofannon module_path/class_name or not a recognized ADK built-in type.")
+    else:
+        raise ValueError(f"Unsupported or incomplete tool configuration for Gofannon/Custom tool ID '{tool_config.get('id', 'N/A')}' (type: {tool_type}). Missing module_path/class_name.")
 
 
 def sanitize_adk_agent_name(name_str: str, prefix_if_needed: str = "agent_") -> str:
@@ -331,14 +312,12 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
             instantiated_child_agents = []
             for idx, child_config in enumerate(child_agent_configs):
                 try:
-                    # Ensure child_config has necessary fields or default them
                     if 'selectedProviderId' not in child_config:
                         logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'selectedProviderId'. Defaulting.")
-                        child_config['selectedProviderId'] = "openai" # Example default
+                        child_config['selectedProviderId'] = "openai"
                     if 'litellm_model_string' not in child_config:
                         logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'litellm_model_string'. Defaulting.")
-                        # Add intelligent defaulting for model_string based on child_config['selectedProviderId'] if possible
-                        child_config['litellm_model_string'] = "gpt-3.5-turbo" # Example default
+                        child_config['litellm_model_string'] = "gpt-3.5-turbo"
 
                     child_agent_instance = instantiate_adk_agent_from_config(
                         child_config,
@@ -363,10 +342,11 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
         looped_agent_adk_name = sanitize_adk_agent_name(f"{adk_agent_name}_looped_child_instance", prefix_if_needed="looped_")
 
         looped_agent_kwargs = _prepare_agent_kwargs_from_config(
-            agent_config,
+            agent_config, # Pass the main agent_config, as LoopAgent's own config defines the looped agent
             looped_agent_adk_name,
             context_for_log=f"(looped child of LoopAgent '{adk_agent_name}', original config: '{looped_agent_config_name}')"
         )
+        # Removed enableCodeExecution from here
         logger.debug(f"Final kwargs for Looped Child ADK Agent '{looped_agent_adk_name}' (for LoopAgent '{adk_agent_name}'): {looped_agent_kwargs}")
         try:
             looped_child_agent_instance = Agent(**looped_agent_kwargs)

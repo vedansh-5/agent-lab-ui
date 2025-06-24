@@ -1,4 +1,5 @@
 // src/services/agentService.js
+// src/services/agentService.js
 import { createCallable } from '../firebaseConfig';
 
 const getGofannonToolManifestCallable = createCallable('get_gofannon_tool_manifest');
@@ -6,6 +7,7 @@ const deployAgentToVertexCallable = createCallable('deploy_agent_to_vertex');
 const queryDeployedAgentCallable = createCallable('query_deployed_agent');
 const deleteVertexAgentCallable = createCallable('delete_vertex_agent');
 const checkVertexAgentDeploymentStatusCallable = createCallable('check_vertex_agent_deployment_status');
+const listMcpServerToolsCallable = createCallable('list_mcp_server_tools'); // New callable
 
 
 export const fetchGofannonTools = async () => {
@@ -28,12 +30,29 @@ export const fetchGofannonTools = async () => {
     }
 };
 
-export const deployAgent = async (agentConfig, agentDocId) => {
-    // agentConfig is expected to have `name`, `description`, `tools`, `usedCustomRepoUrls`, etc.
-    // The `usedCustomRepoUrls` property is new.
+// New function to list tools from an MCP server
+export const listMcpServerTools = async (serverUrl) => {
     try {
-        // The agentConfig passed here should already have `usedCustomRepoUrls`
-        // as assembled by AgentForm.js
+        const result = await listMcpServerToolsCallable({ serverUrl });
+        // Expected result.data: { success: true, tools: [{ name, description, ... }], serverUrl: string }
+        // or { success: false, message: string }
+        if (result.data && result.data.success && Array.isArray(result.data.tools)) {
+            return { success: true, tools: result.data.tools, serverUrl: result.data.serverUrl };
+        }
+        const errorMessage = result.data?.message || "Failed to list tools from MCP server.";
+        console.error("Error listing MCP server tools:", result.data);
+        return { success: false, message: errorMessage, serverUrl: serverUrl };
+    } catch (error) {
+        console.error("Error calling listMcpServerTools callable:", error);
+        const message = error.message || "An unexpected error occurred while listing MCP server tools.";
+        return { success: false, message: message, serverUrl: serverUrl };
+    }
+};
+
+
+export const deployAgent = async (agentConfig, agentDocId) => {
+    // agentConfig now includes `usedMcpServerUrls` in addition to `usedCustomRepoUrls`
+    try {
         const result = await deployAgentToVertexCallable({ agentConfig, agentDocId });
         return result.data;
     } catch (error) {
@@ -62,9 +81,6 @@ export const queryAgent = async (resourceName, message, userId, sessionId, agent
             agentDocId
         };
         if (stuffedContextItems && stuffedContextItems.length > 0) {
-            // Serialize for Firestore if not already. Firestore can handle arrays of objects.
-            // If contents are very large, consider if they *really* need to be stored raw in the run doc.
-            // For now, assume they are manageable strings.
             payload.stuffedContextItems = stuffedContextItems;
         }
         const result = await queryDeployedAgentCallable(payload);

@@ -8,3 +8,5 @@ google-cloud-logging>=3.0.0
 litellm>=1.72.0
 PyPDF>=5.6.0
 PyGithub
+mcp>=1.9.4
+aiohttp

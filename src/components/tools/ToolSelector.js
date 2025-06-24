@@ -1,5 +1,5 @@
 // src/components/tools/ToolSelector.js
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
     Typography, Button, Checkbox, FormControlLabel, FormGroup,
     Box, CircularProgress, Alert, Paper, Grid, FormHelperText, IconButton, Tooltip,
@@ -10,89 +10,48 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import LanguageIcon from '@mui/icons-material/Language'; // For MCP
 
 import ToolSetupDialog from './ToolSetupDialog';
+import { listMcpServerTools } from '../../services/agentService'; // New service import
 
-const PREDEFINED_ADK_FUNCTION_TOOLS = [
-    {
-        id: 'google_search_adk',
-        name: 'Google Search (ADK Built-in)',
-        description: 'Enables Google Search via ADK (Requires Gemini 2 model compatible with tool use).',
-        type: 'adk_builtin_search'
-    },
-    {
-        id: 'vertex_ai_search_adk',
-        name: 'Vertex AI Search (ADK Built-in)',
-        description: 'Enables Vertex AI Search (Requires Gemini 2 model). Datastore ID configuration is not yet supported in this UI.',
-        type: 'adk_builtin_vertex_search',
-        requiresConfig: true
-    },
-];
 
-// Helper to transform Git URL to raw manifest URL
+// PREDEFINED_ADK_FUNCTION_TOOLS removed
+
 const getRawManifestUrl = (repoUrlWithOptionalRef) => {
     if (!repoUrlWithOptionalRef) return null;
-
     const trimmedUrl = repoUrlWithOptionalRef.trim();
-
-    // 1. Check if user provided a direct raw URL first
     if (trimmedUrl.includes('raw.githubusercontent.com') && trimmedUrl.endsWith('tool_manifest.json')) {
         return [trimmedUrl];
     }
-
     let baseUrl = trimmedUrl;
     let ref = null;
-
-    // 2. Try to parse out a ref (commit, branch, tag) from the end of the URL
-    // Example: https://github.com/user/repo.git@my-branch
-    // Example: https://github.com/user/repo@commit123
-    // We use lastIndexOf because a branch/tag name could technically contain '@', though rare for user input.
-    // The primary case is separating base URL from a ref like '@commitsha' or '@branchname'.
     const atSymbolIndex = trimmedUrl.lastIndexOf('@');
-
-    if (atSymbolIndex > 0) { // Ensure @ is not the first character
+    if (atSymbolIndex > 0) {
         const potentialBase = trimmedUrl.substring(0, atSymbolIndex);
         const potentialRef = trimmedUrl.substring(atSymbolIndex + 1);
-
-        // Heuristic: if the part before @ looks like a valid GitHub repo URL path,
-        // and ref is not empty, assume it's a ref.
-        // This checks if 'github.com/' is present and there are at least two path segments (user/repo) before the @.
         if (potentialBase.includes("github.com/") && potentialRef.length > 0) {
-            // Ensure the part before '@' seems to correctly end a repository path
-            // (i.e., ends with .git or has no common file extension that would make it part of the ref itself)
             const repoPathEndMatch = potentialBase.match(/github\.com\/[^/]+\/[^/@]+?(?:\.git)?$/);
             if (repoPathEndMatch) {
-                baseUrl = potentialBase; // The part of the URL before @ref
-                ref = potentialRef;      // The part after @
+                baseUrl = potentialBase;
+                ref = potentialRef;
             }
-            // If repoPathEndMatch is null, it means the '@' was likely part of the repo name or path itself,
-            // so we treat the whole trimmedUrl as baseUrl and ref remains null.
         }
     }
-
-    // 3. Regex for the base GitHub URL (owner/repo part)
-    // Handles optional .git suffix. $ ensures it matches up to the end of the (base) URL.
     const githubBaseRegex = /^(?:https?:\/\/)?github\.com\/([^/]+)\/([^/@]+?)(?:\.git)?$/;
     const match = baseUrl.match(githubBaseRegex);
-
     if (match) {
         const owner = match[1];
-        // match[2] is the repo name, potentially with .git if the regex included it and it wasn't stripped by potentialBase logic
-        const repo = match[2].replace(/\.git$/, ''); // Ensure .git is removed if it was part of the capture
-
+        const repo = match[2].replace(/\.git$/, '');
         if (ref) {
-            // If a ref (commit, branch, tag) is provided, use it directly
             return [`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/tool_manifest.json`];
         } else {
-            // If no ref, try default branches 'main', then 'master'
             return [
                 `https://raw.githubusercontent.com/${owner}/${repo}/main/tool_manifest.json`,
                 `https://raw.githubusercontent.com/${owner}/${repo}/master/tool_manifest.json`
             ];
         }
     }
-
-    // 4. If not a standard GitHub URL or direct raw link, return null
     console.warn(`getRawManifestUrl: Could not parse GitHub URL or identify ref for manifest: ${repoUrlWithOptionalRef}`);
     return null;
 };
@@ -105,8 +64,9 @@ const ToolSelector = ({
                           onRefreshGofannon,
                           loadingGofannon,
                           gofannonError,
-                          isCodeExecutionMode,
-                          onUsedCustomRepoUrlsChange
+                          // isCodeExecutionMode removed
+                          onUsedCustomRepoUrlsChange,
+                          onUsedMcpServerUrlsChange // New prop
                       }) => {
 
     const [isSetupDialogOpen, setIsSetupDialogOpen] = useState(false);
@@ -116,6 +76,12 @@ const ToolSelector = ({
     const [loadedCustomRepos, setLoadedCustomRepos] = useState([]);
     const [loadingCustomRepo, setLoadingCustomRepo] = useState(false);
 
+    // New MCP State
+    const [mcpServerUrlInput, setMcpServerUrlInput] = useState('');
+    const [loadedMcpServers, setLoadedMcpServers] = useState([]); // Array of {url, tools, error, loading}
+    const [loadingMcpServerTools, setLoadingMcpServerTools] = useState(false);
+
+
     const allDisplayableTools = useMemo(() => {
         const gofannonWithSource = (availableGofannonTools || []).map(t => ({ ...t, sourceRepoUrl: 'gofannon_official', type: 'gofannon' }));
         const customToolsWithSource = loadedCustomRepos.reduce((acc, repo) => {
@@ -124,8 +90,20 @@ const ToolSelector = ({
             }
             return acc;
         }, []);
-        return [...gofannonWithSource, ...customToolsWithSource];
-    }, [availableGofannonTools, loadedCustomRepos]);
+        const mcpToolsWithSource = loadedMcpServers.reduce((acc, server) => { // Add MCP tools
+            if (server.tools) {
+                server.tools.forEach(t => acc.push({
+                    ...t, // name, description from MCP server
+                    id: `mcp:${server.url}:${t.name}`, // Create a unique ID for UI selection
+                    mcpServerUrl: server.url,
+                    mcpToolName: t.name, // Original name for backend filter
+                    type: 'mcp'
+                }));
+            }
+            return acc;
+        }, []);
+        return [...gofannonWithSource, ...customToolsWithSource, ...mcpToolsWithSource];
+    }, [availableGofannonTools, loadedCustomRepos, loadedMcpServers]);
 
     const groupedDisplayableTools = useMemo(() => {
         if (!allDisplayableTools || allDisplayableTools.length === 0) {
@@ -145,17 +123,24 @@ const ToolSelector = ({
                 }
             } else if (tool.type === 'custom_repo') {
                 try {
-                    // Try to get a cleaner name if it's a full Git URL
                     let displayUrl = tool.sourceRepoUrl;
                     if (tool.sourceRepoUrl.startsWith('http')) {
-                        const urlObj = new URL(tool.sourceRepoUrl.split('@')[0]); // Use part before @ for display grouping
+                        const urlObj = new URL(tool.sourceRepoUrl.split('@')[0]);
                         displayUrl = `${urlObj.hostname}${urlObj.pathname.replace(/\.git$/, '')}`;
                     }
-                    groupName = `Custom: ${displayUrl}`;
+                    groupName = `Custom Repo: ${displayUrl}`;
                 } catch (e) {
-                    groupName = `Custom: ${tool.sourceRepoUrl}`;
+                    groupName = `Custom Repo: ${tool.sourceRepoUrl}`;
+                }
+            } else if (tool.type === 'mcp') { // Group MCP tools by server URL
+                try {
+                    const urlObj = new URL(tool.mcpServerUrl);
+                    groupName = `MCP Server: ${urlObj.protocol}//${urlObj.hostname}${urlObj.port ? `:${urlObj.port}`:''}${urlObj.pathname === '/' ? '' : urlObj.pathname}`;
+                } catch(e) {
+                    groupName = `MCP Server: ${tool.mcpServerUrl}`;
                 }
             }
+
 
             if (!acc[groupName]) {
                 acc[groupName] = [];
@@ -168,27 +153,21 @@ const ToolSelector = ({
     const handleLoadCustomRepo = async () => {
         if (!customRepoUrlInput.trim()) return;
         setLoadingCustomRepo(true);
-
-        const userProvidedUrl = customRepoUrlInput.trim(); // This might include @ref
-
+        const userProvidedUrl = customRepoUrlInput.trim();
         if (loadedCustomRepos.some(repo => repo.url === userProvidedUrl)) {
             alert("This repository URL (including any specified commit/branch) has already been processed.");
             setLoadingCustomRepo(false);
             return;
         }
-
         const potentialManifestUrls = getRawManifestUrl(userProvidedUrl);
-
         if (!potentialManifestUrls) {
             setLoadedCustomRepos(prev => [...prev, { url: userProvidedUrl, tools: null, error: "Invalid or unsupported Git repository URL format. Please provide a GitHub HTTPS URL (e.g., https://github.com/user/repo or https://github.com/user/repo.git@commit) or a direct raw manifest URL." }]);
             setLoadingCustomRepo(false);
             return;
         }
-
         let manifestData = null;
         let fetchError = null;
         let successfulFetchUrl = null;
-
         for (const url of potentialManifestUrls) {
             try {
                 const response = await fetch(url);
@@ -212,7 +191,6 @@ const ToolSelector = ({
                 fetchError = `Error fetching or parsing manifest from ${url}: ${err.message}`;
             }
         }
-
         if (manifestData) {
             setLoadedCustomRepos(prev => [...prev, { url: userProvidedUrl, tools: manifestData, error: null, manifestSource: successfulFetchUrl }]);
             setCustomRepoUrlInput('');
@@ -222,6 +200,46 @@ const ToolSelector = ({
         setLoadingCustomRepo(false);
     };
 
+    // New: Handle loading tools from MCP Server
+    const handleLoadMcpServerTools = async () => {
+        if (!mcpServerUrlInput.trim()) return;
+        const serverUrl = mcpServerUrlInput.trim();
+
+        // Check if already loaded or loading
+        const existingServerEntry = loadedMcpServers.find(s => s.url === serverUrl);
+        if (existingServerEntry?.loading || (existingServerEntry && !existingServerEntry.error)) {
+            alert(`Tools from ${serverUrl} are already loaded or currently loading.`);
+            return;
+        }
+
+        setLoadingMcpServerTools(true); // General loading indicator if needed, or manage per-server
+        // Update specific server entry to loading: true
+        setLoadedMcpServers(prev => {
+            const existing = prev.find(s => s.url === serverUrl);
+            if (existing) {
+                return prev.map(s => s.url === serverUrl ? { ...s, loading: true, error: null } : s);
+            }
+            return [...prev, { url: serverUrl, tools: [], error: null, loading: true }];
+        });
+
+        try {
+            const result = await listMcpServerTools(serverUrl); // Call new service
+            if (result.success && Array.isArray(result.tools)) {
+                setLoadedMcpServers(prev => prev.map(s => s.url === serverUrl ? { ...s, tools: result.tools, error: null, loading: false } : s));
+                setMcpServerUrlInput(''); // Clear input on success
+            } else {
+                const errorMsg = result.message || "Failed to load tools from MCP server.";
+                setLoadedMcpServers(prev => prev.map(s => s.url === serverUrl ? { ...s, tools: [], error: errorMsg, loading: false } : s));
+            }
+        } catch (error) {
+            const errorMsg = error.message || "An unexpected error occurred while fetching MCP tools.";
+            setLoadedMcpServers(prev => prev.map(s => s.url === serverUrl ? { ...s, tools: [], error: errorMsg, loading: false } : s));
+        } finally {
+            setLoadingMcpServerTools(false);
+        }
+    };
+
+
     const openSetupDialog = (toolManifestEntry, existingConfig = null) => {
         setToolForSetup(toolManifestEntry);
         setExistingConfigForSetup(existingConfig);
@@ -229,8 +247,7 @@ const ToolSelector = ({
     };
 
     const handleToolToggle = (toolManifestEntry, toolTypeFromManifest) => {
-        if (isCodeExecutionMode) return;
-
+        // isCodeExecutionMode removed
         const isCurrentlySelected = selectedTools.some(st => st.id === toolManifestEntry.id);
         let newSelectedTools;
 
@@ -238,9 +255,7 @@ const ToolSelector = ({
             newSelectedTools = selectedTools.filter(st => st.id !== toolManifestEntry.id);
         } else {
             let toolBaseData;
-            // For Gofannon or custom_repo, store the original URL from which the tool manifest was loaded
-            // This userProvidedUrl (which might include @ref) is what's needed for backend requirements
-            const sourceRepoUrlForBackend = toolManifestEntry.sourceRepoUrl;
+            const sourceRepoUrlForBackend = toolManifestEntry.sourceRepoUrl; // For Gofannon/Custom
 
             if (toolTypeFromManifest === 'gofannon' || toolTypeFromManifest === 'custom_repo') {
                 toolBaseData = {
@@ -251,13 +266,18 @@ const ToolSelector = ({
                     type: toolTypeFromManifest,
                     ...(toolTypeFromManifest === 'custom_repo' && { sourceRepoUrl: sourceRepoUrlForBackend })
                 };
-            } else if (toolTypeFromManifest === 'adk_builtin_search' || toolTypeFromManifest === 'adk_builtin_vertex_search') {
+            } else if (toolTypeFromManifest === 'mcp') { // Handle MCP tools
                 toolBaseData = {
-                    id: toolManifestEntry.id,
+                    id: toolManifestEntry.id, // UI unique ID
                     name: toolManifestEntry.name,
-                    type: toolTypeFromManifest
+                    description: toolManifestEntry.description,
+                    type: 'mcp',
+                    mcpServerUrl: toolManifestEntry.mcpServerUrl,
+                    mcpToolName: toolManifestEntry.mcpToolName // Original name from server
                 };
-            } else {
+            }
+            // ADK built-in tool cases removed
+            else {
                 return;
             }
 
@@ -273,13 +293,16 @@ const ToolSelector = ({
             .filter(st => st.type === 'custom_repo' && st.sourceRepoUrl)
             .map(st => st.sourceRepoUrl);
         onUsedCustomRepoUrlsChange(Array.from(new Set(currentCustomRepoUrls)));
+
+        const currentMcpServerUrls = newSelectedTools // Update MCP Server URLs for parent form
+            .filter(st => st.type === 'mcp' && st.mcpServerUrl)
+            .map(st => st.mcpServerUrl);
+        onUsedMcpServerUrlsChange(Array.from(new Set(currentMcpServerUrls)));
     };
 
     const handleSaveSetup = (toolConfiguration) => {
         if (!toolForSetup) return;
-
         const sourceRepoUrlForBackend = toolForSetup.sourceRepoUrl;
-
         const newSelectedToolWithConfig = {
             id: toolForSetup.id,
             name: toolForSetup.name,
@@ -289,7 +312,6 @@ const ToolSelector = ({
             configuration: toolConfiguration,
             ...(toolForSetup.type === 'custom_repo' && { sourceRepoUrl: sourceRepoUrlForBackend })
         };
-
         let finalSelectedTools;
         const isAlreadyListed = selectedTools.some(st => st.id === newSelectedToolWithConfig.id);
         if (isAlreadyListed) {
@@ -297,24 +319,23 @@ const ToolSelector = ({
         } else {
             finalSelectedTools = [...selectedTools, newSelectedToolWithConfig];
         }
-
         onSelectedToolsChange(finalSelectedTools);
         const currentCustomRepoUrls = finalSelectedTools
             .filter(st => st.type === 'custom_repo' && st.sourceRepoUrl)
             .map(st => st.sourceRepoUrl);
         onUsedCustomRepoUrlsChange(Array.from(new Set(currentCustomRepoUrls)));
-
+        // MCP URLs don't change here, they are part of the base tool data
         setIsSetupDialogOpen(false);
         setToolForSetup(null);
         setExistingConfigForSetup(null);
     };
 
     const handleEditConfiguration = (toolId) => {
-        if (isCodeExecutionMode) return;
+        // isCodeExecutionMode removed
         const toolManifestEntry = allDisplayableTools.find(t => t.id === toolId);
         const selectedToolEntry = selectedTools.find(st => st.id === toolId);
 
-        if (toolManifestEntry && selectedToolEntry && toolManifestEntry.setup_parameters && toolManifestEntry.setup_parameters.length > 0) {
+        if (toolManifestEntry?.type !== 'mcp' && selectedToolEntry && toolManifestEntry.setup_parameters && toolManifestEntry.setup_parameters.length > 0) {
             openSetupDialog(toolManifestEntry, selectedToolEntry.configuration || {});
         } else if (toolManifestEntry && (!toolManifestEntry.setup_parameters || toolManifestEntry.setup_parameters.length === 0)) {
             alert("This tool does not require additional configuration.");
@@ -326,6 +347,21 @@ const ToolSelector = ({
         return tool && tool.configuration && Object.keys(tool.configuration).length > 0;
     };
 
+    const getToolDisplayName = (tool) => {
+        let displayName = tool.name;
+        if (tool.type === 'mcp') {
+            // Shorten server URL for display if it's too long
+            let serverDisplay = tool.mcpServerUrl;
+            try {
+                const urlObj = new URL(tool.mcpServerUrl);
+                serverDisplay = `${urlObj.hostname}${urlObj.port ? `:${urlObj.port}` : ''}`;
+            } catch (e) { /* use raw url */ }
+            displayName += ` (from ${serverDisplay})`;
+        }
+        return displayName;
+    };
+
+
     return (
         <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
             <Accordion defaultExpanded={false} sx={{ '&.MuiAccordion-root:before': { display: 'none' }, boxShadow: 'none', borderBottom: '1px solid', borderColor: 'divider'}}>
@@ -335,12 +371,12 @@ const ToolSelector = ({
                     id="gofannon-tools-header"
                     sx={{ flexDirection: 'row-reverse', '& .MuiAccordionSummary-content': { justifyContent: 'space-between', alignItems: 'center', ml: 1 } }}
                 >
-                    <Typography variant="h6" component="h3">Gofannon & Custom Tools</Typography>
+                    <Typography variant="h6" component="h3">Gofannon & Custom Repo Tools</Typography>
                     <Button
                         variant="outlined"
                         size="small"
                         onClick={(e) => { e.stopPropagation(); onRefreshGofannon(); }}
-                        disabled={loadingGofannon || isCodeExecutionMode}
+                        disabled={loadingGofannon} // isCodeExecutionMode removed
                         startIcon={loadingGofannon ? <CircularProgress size={16} /> : <RefreshIcon />}
                         sx={{ order: 2 }}
                     >
@@ -351,8 +387,9 @@ const ToolSelector = ({
                     {gofannonError && <Alert severity="error" sx={{ mb: 1 }}>{gofannonError}</Alert>}
                     {loadingGofannon && <Box sx={{display:'flex', justifyContent:'center', my:2}}><CircularProgress size={24} /></Box>}
 
-                    {!loadingGofannon && Object.keys(groupedDisplayableTools).length > 0 ? (
+                    {!loadingGofannon && Object.keys(groupedDisplayableTools).filter(group => !group.startsWith("MCP Server:")).length > 0 ? (
                         Object.entries(groupedDisplayableTools)
+                            .filter(([groupName]) => !groupName.startsWith("MCP Server:")) // Filter out MCP groups here
                             .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
                             .map(([groupName, toolsInGroup]) => (
                                 <Box key={groupName} sx={{ mb: 2 }}>
@@ -381,7 +418,7 @@ const ToolSelector = ({
                                                                         onChange={() => handleToolToggle(tool, tool.type)}
                                                                         name={tool.id}
                                                                         size="small"
-                                                                        disabled={isCodeExecutionMode}
+                                                                        // disabled={isCodeExecutionMode} // Removed
                                                                     />
                                                                 }
                                                                 label={
@@ -397,7 +434,7 @@ const ToolSelector = ({
                                                                         <IconButton
                                                                             onClick={() => handleEditConfiguration(tool.id)}
                                                                             size="small"
-                                                                            disabled={isCodeExecutionMode}
+                                                                            // disabled={isCodeExecutionMode} // Removed
                                                                         >
                                                                             {configured ? <CheckCircleIcon color="success" fontSize="small" /> : <SettingsIcon color="warning" fontSize="small" />}
                                                                         </IconButton>
@@ -412,7 +449,7 @@ const ToolSelector = ({
                                 </Box>
                             ))
                     ) : (
-                        !loadingGofannon && <Typography variant="body2" color="text.secondary">No Gofannon or custom tools loaded. Click refresh or add a custom repo.</Typography>
+                        !loadingGofannon && <Typography variant="body2" color="text.secondary">No Gofannon or custom repo tools loaded. Click refresh or add a custom repo.</Typography>
                     )}
                 </AccordionDetails>
             </Accordion>
@@ -423,7 +460,7 @@ const ToolSelector = ({
                     aria-controls="custom-tool-repo-content"
                     id="custom-tool-repo-header"
                 >
-                    <Typography variant="h6" component="h3">Load Tools from Custom Git Repo</Typography>
+                    <Typography variant="h6" component="h3">Load Gofannon Tools from Custom Git Repo</Typography>
                 </AccordionSummary>
                 <AccordionDetails>
                     <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 2}}>
@@ -435,15 +472,15 @@ const ToolSelector = ({
                             value={customRepoUrlInput}
                             onChange={(e) => setCustomRepoUrlInput(e.target.value)}
                             placeholder="e.g., https://github.com/user/repo.git or ...@commit_hash"
-                            disabled={loadingCustomRepo || isCodeExecutionMode}
+                            disabled={loadingCustomRepo} // isCodeExecutionMode removed
                         />
                         <Button
                             variant="contained"
                             onClick={handleLoadCustomRepo}
-                            disabled={loadingCustomRepo || !customRepoUrlInput.trim() || isCodeExecutionMode}
+                            disabled={loadingCustomRepo || !customRepoUrlInput.trim()} // isCodeExecutionMode removed
                             startIcon={loadingCustomRepo ? <CircularProgress size={16} /> : <AddCircleOutlineIcon />}
                         >
-                            Load Tools
+                            Load Gofannon Tools
                         </Button>
                     </Box>
                     <FormHelperText>
@@ -458,53 +495,113 @@ const ToolSelector = ({
                 </AccordionDetails>
             </Accordion>
 
-            {PREDEFINED_ADK_FUNCTION_TOOLS.length > 0 && (
-                <Accordion defaultExpanded={false} sx={{ '&.MuiAccordion-root:before': { display: 'none' }, boxShadow: 'none', mt:0, borderBottom: '1px solid', borderColor: 'divider' }}>
-                    <AccordionSummary
-                        expandIcon={<ExpandMoreIcon />}
-                        aria-controls="adk-tools-content"
-                        id="adk-tools-header"
-                    >
-                        <Typography variant="h6" component="h3">Select ADK Built-in Tools</Typography>
-                    </AccordionSummary>
-                    <AccordionDetails sx={{pt:0}}>
-                        <FormGroup sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1 }}>
-                            <Grid container spacing={1}>
-                                {PREDEFINED_ADK_FUNCTION_TOOLS.map(tool => (
-                                    <Grid item xs={12} sm={6} key={tool.id}>
-                                        <FormControlLabel
-                                            control={
-                                                <Checkbox
-                                                    checked={selectedTools.some(st => st.id === tool.id)}
-                                                    onChange={() => handleToolToggle(tool, tool.type)}
-                                                    name={tool.id}
-                                                    disabled={tool.requiresConfig || isCodeExecutionMode}
-                                                    size="small"
-                                                />
-                                            }
-                                            label={<Typography variant="body2" title={tool.description}>{tool.name}</Typography>}
-                                        />
-                                        {tool.requiresConfig && <FormHelperText sx={{ml:3.5, mt:-0.5}}>Setup via UI pending for this built-in tool</FormHelperText>}
-                                    </Grid>
-                                ))}
-                            </Grid>
-                        </FormGroup>
-                    </AccordionDetails>
-                </Accordion>
-            )}
+            {/* New MCP Tools Section */}
+            <Accordion sx={{ '&.MuiAccordion-root:before': { display: 'none' }, boxShadow: 'none', borderBottom: '1px solid', borderColor: 'divider'}}>
+                <AccordionSummary
+                    expandIcon={<ExpandMoreIcon />}
+                    aria-controls="mcp-tools-content"
+                    id="mcp-tools-header"
+                >
+                    <Typography variant="h6" component="h3">Load Tools from MCP Server</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 2}}>
+                        <TextField
+                            fullWidth
+                            label="MCP Server URL"
+                            variant="outlined"
+                            size="small"
+                            value={mcpServerUrlInput}
+                            onChange={(e) => setMcpServerUrlInput(e.target.value)}
+                            placeholder="e.g., http://localhost:8080 or https://mcp.example.com"
+                            disabled={loadingMcpServerTools}
+                        />
+                        <Button
+                            variant="contained"
+                            onClick={handleLoadMcpServerTools}
+                            disabled={loadingMcpServerTools || !mcpServerUrlInput.trim()}
+                            startIcon={loadingMcpServerTools ? <CircularProgress size={16} /> : <LanguageIcon />}
+                        >
+                            Load MCP Tools
+                        </Button>
+                    </Box>
+                    <FormHelperText>
+                        Enter the base URL of an MCP-compliant server to discover its available tools.
+                    </FormHelperText>
+                    {/* Display errors for MCP server loading attempts */}
+                    {loadedMcpServers.filter(server => server.error).map(server => (
+                        <Alert severity="error" key={server.url} sx={{ mt: 1 }}>
+                            Failed to load tools from MCP server {server.url}: {server.error}
+                        </Alert>
+                    ))}
+                    {/* Display loaded MCP tools (similar to Gofannon/Custom) */}
+                    {Object.keys(groupedDisplayableTools).filter(group => group.startsWith("MCP Server:")).length > 0 && (
+                        Object.entries(groupedDisplayableTools)
+                            .filter(([groupName]) => groupName.startsWith("MCP Server:"))
+                            .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
+                            .map(([groupName, toolsInGroup]) => (
+                                <Box key={groupName} sx={{ mb: 2, mt: 1 }}>
+                                    <Typography
+                                        variant="subtitle1"
+                                        component="h4"
+                                        sx={{ mt: 1, mb: 0.5, pb: 0.5, borderBottom: '1px solid', borderColor: 'divider', fontWeight: 'medium' }}
+                                    >
+                                        {groupName} ({toolsInGroup.filter(t => t.type ==='mcp').length} tools)
+                                    </Typography>
+                                    <FormGroup sx={{ pl: 1 }}>
+                                        <Grid container spacing={0}>
+                                            {toolsInGroup
+                                                .filter(tool => tool.type === 'mcp') // Ensure only MCP tools are listed here
+                                                .sort((a, b) => a.name.localeCompare(b.name))
+                                                .map(tool => {
+                                                    const isSelected = selectedTools.some(st => st.id === tool.id);
+                                                    // MCP tools currently don't have setup_parameters handled in this UI
+                                                    // const configured = false; // isToolConfigured(tool.id);
+                                                    // const requiresSetup = false; // tool.setup_parameters && tool.setup_parameters.length > 0;
+                                                    return (
+                                                        <Grid item xs={12} sm={6} key={tool.id} sx={{display: 'flex', alignItems: 'center'}}>
+                                                            <FormControlLabel
+                                                                control={
+                                                                    <Checkbox
+                                                                        checked={isSelected}
+                                                                        onChange={() => handleToolToggle(tool, tool.type)}
+                                                                        name={tool.id}
+                                                                        size="small"
+                                                                    />
+                                                                }
+                                                                label={
+                                                                    <Typography variant="body2" title={tool.description || tool.name}>
+                                                                        {tool.name} {/* MCP tool name from server */}
+                                                                    </Typography>
+                                                                }
+                                                                sx={{ mr: 0, flexGrow:1 }}
+                                                            />
+                                                            {/* Configuration for MCP tools not implemented via this dialog */}
+                                                        </Grid>
+                                                    );
+                                                })}
+                                        </Grid>
+                                    </FormGroup>
+                                </Box>
+                            ))
+                    )}
+                </AccordionDetails>
+            </Accordion>
 
-            {selectedTools.length > 0 && !isCodeExecutionMode && (
+
+            {/* ADK Built-in Tools Section Removed */}
+
+            {selectedTools.length > 0 && (
                 <Box mt={2}>
                     <Typography variant="subtitle1" component="h4">Selected Tools ({selectedTools.length}):</Typography>
                     <Box component="ul" sx={{ pl: 2, listStyle: 'disc', maxHeight: 100, overflowY: 'auto' }}>
                         {selectedTools.map(st => (
                             <Typography component="li" variant="body2" key={st.id} color="text.secondary">
-                                {st.name} ({
-                                st.type === 'adk_builtin_search' ? 'ADK Search' :
-                                    st.type === 'adk_builtin_vertex_search' ? 'ADK Vertex Search' :
-                                        st.type === 'gofannon' ? `Gofannon${st.configuration ? ' (Configured)' : ''}` :
-                                            st.type === 'custom_repo' ? `Custom Repo${st.configuration ? ' (Configured)' : ''}` :
-                                                st.type || 'Unknown'
+                                {getToolDisplayName(st)} ({
+                                st.type === 'gofannon' ? `Gofannon${st.configuration ? ' (Configured)' : ''}` :
+                                    st.type === 'custom_repo' ? `Custom Repo${st.configuration ? ' (Configured)' : ''}` :
+                                        st.type === 'mcp' ? 'MCP Tool' :
+                                            st.type || 'Unknown'
                             })
                             </Typography>
                         ))}
@@ -512,11 +609,7 @@ const ToolSelector = ({
                 </Box>
             )}
 
-            {isCodeExecutionMode && (
-                <Alert severity="info" sx={{mt:2}}>
-                    Built-in Code Execution is enabled. Other tools are disabled.
-                </Alert>
-            )}
+            {/* isCodeExecutionMode Alert Removed */}
 
             {toolForSetup && (
                 <ToolSetupDialog

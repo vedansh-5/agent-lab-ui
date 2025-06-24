@@ -1,4 +1,5 @@
 // src/components/agents/AgentForm.js
+// src/components/agents/AgentForm.js
 import React, {useState, useEffect, useRef} from 'react';
 import ToolSelector from '../tools/ToolSelector';
 import ChildAgentFormDialog from './ChildAgentFormDialog';
@@ -16,7 +17,7 @@ import {
     TextField, Button, Select, MenuItem, FormControl, InputLabel,
     Paper, Grid, Box, CircularProgress, Typography, IconButton, List,
     ListItem, ListItemText, ListItemSecondaryAction, FormHelperText,
-    Checkbox, FormControlLabel, Divider, Stack, Alert
+    Divider, Stack, Alert // Removed Checkbox, FormControlLabel (no longer for code exec)
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
@@ -51,28 +52,27 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const [description, setDescription] = useState(initialData.description || '');
     const [agentType, setAgentType] = useState(initialData.agentType || AGENT_TYPES[0]);
 
-    // Model Selection State
     const [selectedProviderId, setSelectedProviderId] = useState(initialData.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID);
-    const [selectedBaseModelId, setSelectedBaseModelId] = useState(initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID); // Stores base model name like "gpt-4o"
-
-    // This is what the user types for "custom" provider, or derived for others.
-    // For non-custom, it's the base model ID (e.g. "gpt-4o").
-    // For custom, it's the full LiteLLM string (e.g. "ollama/mistral").
+    const [selectedBaseModelId, setSelectedBaseModelId] = useState(initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID);
     const [inputtedModelString, setInputtedModelString] = useState(initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID);
-
     const [litellmApiBase, setLitellmApiBase] = useState(initialData.litellm_api_base || '');
     const [litellmApiKey, setLitellmApiKey] = useState(initialData.litellm_api_key || '');
-
 
     const [instruction, setInstruction] = useState(initialData.instruction || '');
     const [selectedTools, setSelectedTools] = useState(initialData.tools || []);
     const [maxLoops, setMaxLoops] = useState(initialData.maxLoops || 3);
-    const [enableCodeExecution, setEnableCodeExecution] = useState(initialData.enableCodeExecution || false);
+    // enableCodeExecution state and related logic removed
     const [outputKey, setOutputKey] = useState(initialData.outputKey || '');
+    // usedCustomRepoUrls now needs to be managed based on selectedTools types
     const [usedCustomRepoUrls, setUsedCustomRepoUrls] = useState(
         initialData.usedCustomRepoUrls ||
         (initialData.tools?.filter(t => t.type === 'custom_repo' && t.sourceRepoUrl).map(t => t.sourceRepoUrl) || [])
     );
+    const [usedMcpServerUrls, setUsedMcpServerUrls] = useState( // New state for MCP Server URLs
+        initialData.usedMcpServerUrls ||
+        (initialData.tools?.filter(t => t.type === 'mcp' && t.mcpServerUrl).map(t => t.mcpServerUrl) || [])
+    );
+
 
     const [childAgents, setChildAgents] = useState(initialData.childAgents || []);
     const [isChildFormOpen, setIsChildFormOpen] = useState(false);
@@ -87,11 +87,9 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
 
     const initialDataProcessedRef = useRef(false);
 
-    // Derived state for UI
     const currentProviderConfig = getLiteLLMProviderConfig(selectedProviderId);
     const availableBaseModels = currentProviderConfig?.models || [];
 
-    // Effect for initializing form state from initialData
     useEffect(() => {
         if (initialData && !initialDataProcessedRef.current) {
             setName(initialData.name || '');
@@ -99,9 +97,8 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             setAgentType(initialData.agentType || AGENT_TYPES[0]);
 
             let initialSelectedProvider = initialData.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID;
-            let initialBaseModelName = initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID; // This is the base model name part
+            let initialBaseModelName = initialData.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID;
 
-            // Infer provider if not set, and derive base model name if a prefix exists
             if (!initialData.selectedProviderId && initialData.litellm_model_string) {
                 const fullModelStr = initialData.litellm_model_string;
                 let foundProvider = MODEL_PROVIDERS_LITELLM.find(
@@ -112,18 +109,14 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                     initialSelectedProvider = foundProvider.id;
                     initialBaseModelName = fullModelStr.substring(foundProvider.liteLlmModelPrefix.length + 1);
                 } else {
-                    // Could be a custom model string without a known prefix, or azure, or openai_compatible without explicit prefix
-                    // If it's azure/..., it's Azure provider.
                     if (fullModelStr.startsWith("azure/")) {
                         foundProvider = getLiteLLMProviderConfig("azure");
                         initialSelectedProvider = "azure";
                         initialBaseModelName = fullModelStr.substring("azure/".length);
                     }
-                    // If no known prefix, and not explicitly "custom", check if it looks like openai_compatible
                     else if (initialSelectedProvider !== "custom" && !MODEL_PROVIDERS_LITELLM.some(p => p.id === initialSelectedProvider)) {
-                        // This logic might need refinement if `initialData.selectedProviderId` can be something like "openai_compatible"
-                        initialSelectedProvider = 'custom'; // Default to custom if no prefix matches
-                        initialBaseModelName = fullModelStr; // For custom, base model is the full string
+                        initialSelectedProvider = 'custom';
+                        initialBaseModelName = fullModelStr;
                     }
                 }
             }
@@ -131,8 +124,8 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
 
             const providerConf = getLiteLLMProviderConfig(initialSelectedProvider);
             if (providerConf?.id === 'custom' || providerConf?.id === 'openai_compatible') {
-                setSelectedBaseModelId(''); // No specific "base model" dropdown for these
-                setInputtedModelString(initialBaseModelName); // This is the full string
+                setSelectedBaseModelId('');
+                setInputtedModelString(initialBaseModelName);
             } else if (providerConf?.models.some(m => m.id === initialBaseModelName)) {
                 setSelectedBaseModelId(initialBaseModelName);
                 setInputtedModelString(initialBaseModelName);
@@ -145,14 +138,15 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             setLitellmApiBase(initialData.litellm_api_base || '');
             setLitellmApiKey(initialData.litellm_api_key || '');
             setInstruction(initialData.instruction || '');
-            const initialEnableCodeExec = initialData.enableCodeExecution || false;
-            setEnableCodeExecution(initialEnableCodeExec);
-            setSelectedTools(initialEnableCodeExec ? [] : (initialData.tools || []));
+            // enableCodeExecution removed
+            setSelectedTools(initialData.tools || []);
             setUsedCustomRepoUrls(
-                initialEnableCodeExec ? [] : (
-                    initialData.usedCustomRepoUrls ||
-                    (initialData.tools?.filter(t => t.type === 'custom_repo' && t.sourceRepoUrl).map(t => t.sourceRepoUrl) || [])
-                )
+                initialData.usedCustomRepoUrls ||
+                (initialData.tools?.filter(t => t.type === 'custom_repo' && t.sourceRepoUrl).map(t => t.sourceRepoUrl) || [])
+            );
+            setUsedMcpServerUrls( // Initialize MCP URLs
+                initialData.usedMcpServerUrls ||
+                (initialData.tools?.filter(t => t.type === 'mcp' && t.mcpServerUrl).map(t => t.mcpServerUrl) || [])
             );
             setMaxLoops(initialData.maxLoops || 3);
             setOutputKey(initialData.outputKey || '');
@@ -163,18 +157,13 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         }
     }, [initialData]);
 
-    // Effect for handling selectedProviderId change
     useEffect(() => {
-        // Don't run this effect if initialData hasn't been processed yet, to avoid premature reset
         if (!initialDataProcessedRef.current && Object.keys(initialData).length > 0) return;
 
         const providerConf = getLiteLLMProviderConfig(selectedProviderId);
         if (providerConf) {
             if (providerConf.id === 'custom' || providerConf.id === 'openai_compatible') {
-                setSelectedBaseModelId(''); // Clear base model dropdown selection
-                // For 'custom'/'openai_compatible', allow user to type the model string
-                // If switching from a non-custom provider, clear inputtedModelString,
-                // otherwise preserve it (e.g. if initialData was custom)
+                setSelectedBaseModelId('');
                 if (initialData?.selectedProviderId !== 'custom' && initialData?.selectedProviderId !== 'openai_compatible') {
                     setInputtedModelString('');
                 } else {
@@ -182,56 +171,49 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                 }
 
             } else if (providerConf.models && providerConf.models.length > 0) {
-                // Default to the first model of the new provider if current selection isn't valid for it
                 const firstModelId = providerConf.models[0].id;
                 const currentBaseIsValidForNewProvider = providerConf.models.some(m => m.id === selectedBaseModelId);
-
                 const newBaseModel = currentBaseIsValidForNewProvider ? selectedBaseModelId : firstModelId;
                 setSelectedBaseModelId(newBaseModel);
-                setInputtedModelString(newBaseModel); // Update inputtedModelString to reflect new base model
-            } else { // Provider with no predefined models (should not happen for non-custom)
+                setInputtedModelString(newBaseModel);
+            } else {
                 setSelectedBaseModelId('');
                 setInputtedModelString('');
             }
-            // Reset API base/key if provider doesn't allow custom, or set to provider default if exists
             setLitellmApiBase(providerConf.allowsCustomBase ? (litellmApiBase || '') : (providerConf.apiBase || ''));
-            setLitellmApiKey(''); // API key generally should be cleared or re-evaluated
+            setLitellmApiKey('');
         }
     }, [selectedProviderId, initialData, litellmApiBase, selectedBaseModelId]);
 
-    // Effect for handling selectedBaseModelId change (for non-custom providers)
     useEffect(() => {
-        // Don't run this effect if initialData hasn't been processed yet
         if (!initialDataProcessedRef.current && Object.keys(initialData).length > 0) return;
-
         if (selectedProviderId !== 'custom' && selectedProviderId !== 'openai_compatible' && selectedBaseModelId) {
-            setInputtedModelString(selectedBaseModelId); // Update the display/input field
+            setInputtedModelString(selectedBaseModelId);
         }
     }, [selectedBaseModelId, selectedProviderId, initialData]);
 
+    // Removed handleCodeExecutionChange
 
-    const handleCodeExecutionChange = (event) => {
-        const isChecked = event.target.checked;
-        setEnableCodeExecution(isChecked);
-        if (isChecked) {
-            setSelectedTools([]);
-            setUsedCustomRepoUrls([]);
-        }
-    };
-
-    const handleUsedCustomRepoUrlsChange = (urls) => {
+    const handleUsedCustomRepoUrlsChange = (urls) => { // Keep this for custom Gofannon tools
         setUsedCustomRepoUrls(urls);
     };
+    const handleUsedMcpServerUrlsChange = (urls) => { // New handler for MCP servers
+        setUsedMcpServerUrls(urls);
+    };
+
 
     const handleSelectedToolsChange = (newTools) => {
         setSelectedTools(newTools);
-        if (newTools.length > 0 && enableCodeExecution) {
-            setEnableCodeExecution(false);
-        }
+        // enableCodeExecution logic removed
         const currentCustomRepoUrls = newTools
             .filter(st => st.type === 'custom_repo' && st.sourceRepoUrl)
             .map(st => st.sourceRepoUrl);
         setUsedCustomRepoUrls(Array.from(new Set(currentCustomRepoUrls)));
+
+        const currentMcpServerUrls = newTools // Update MCP Server URLs
+            .filter(st => st.type === 'mcp' && st.mcpServerUrl)
+            .map(st => st.mcpServerUrl);
+        setUsedMcpServerUrls(Array.from(new Set(currentMcpServerUrls)));
     };
 
     const handleRefreshGofannonTools = async () => {
@@ -285,7 +267,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         if (selectedProviderId === 'custom' || selectedProviderId === 'openai_compatible') {
             finalModelStringForSubmit = inputtedModelString.trim();
         } else {
-            finalModelStringForSubmit = selectedBaseModelId; // This is the base model name like "gpt-4o"
+            finalModelStringForSubmit = selectedBaseModelId;
         }
 
         if (!finalModelStringForSubmit && (agentType === 'Agent' || agentType === 'LoopAgent') ) {
@@ -296,21 +278,16 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         const agentDataToSubmit = {
             name, description, agentType,
             instruction,
-            tools: enableCodeExecution ? [] : selectedTools,
-            enableCodeExecution,
-            usedCustomRepoUrls: enableCodeExecution ? [] : usedCustomRepoUrls,
+            tools: selectedTools, // enableCodeExecution removed
+            // enableCodeExecution removed
+            usedCustomRepoUrls: usedCustomRepoUrls, // Keep for Gofannon custom
+            usedMcpServerUrls: usedMcpServerUrls, // Add MCP Server URLs
 
-            selectedProviderId: selectedProviderId, // This is the key for backend logic
-            litellm_model_string: finalModelStringForSubmit, // This is base for standard, full for custom/oai-compat
-
-            // API Base: Use user input if provider allows custom and input is non-empty, otherwise use provider default (which can be null).
-            // If provider.apiBase is null (like for 'custom' or 'azure'), user input is critical.
+            selectedProviderId: selectedProviderId,
+            litellm_model_string: finalModelStringForSubmit,
             litellm_api_base: (currentProviderConfig?.allowsCustomBase && litellmApiBase.trim())
                 ? litellmApiBase.trim()
-                : (currentProviderConfig?.apiBase || null), // Default to provider's base or null if none
-
-            // API Key: Use user input if provider allows custom and input is non-empty.
-            // Backend will check env var based on selectedProviderId if this is null.
+                : (currentProviderConfig?.apiBase || null),
             litellm_api_key: (currentProviderConfig?.allowsCustomKey && litellmApiKey.trim())
                 ? litellmApiKey.trim()
                 : null,
@@ -326,19 +303,23 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         }
         if (agentType === 'SequentialAgent' || agentType === 'ParallelAgent') {
             agentDataToSubmit.childAgents = childAgents.map(ca => {
-                const { id, ...restOfConfig } = ca; // Remove client-side id
+                const { id, ...restOfConfig } = ca;
 
                 let childFinalModelString;
                 if (ca.selectedProviderId === 'custom' || ca.selectedProviderId === 'openai_compatible') {
-                    childFinalModelString = ca.litellm_model_string; // Assume this is already the full/correct string
+                    childFinalModelString = ca.litellm_model_string;
                 } else {
-                    childFinalModelString = ca.litellm_model_string; // This should be the base model name from child form
+                    childFinalModelString = ca.litellm_model_string;
                 }
 
                 return {
                     ...restOfConfig,
                     selectedProviderId: ca.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID,
-                    litellm_model_string: childFinalModelString || DEFAULT_LITELLM_BASE_MODEL_ID
+                    litellm_model_string: childFinalModelString || DEFAULT_LITELLM_BASE_MODEL_ID,
+                    // enableCodeExecution removed from child agents as well
+                    tools: ca.tools || [],
+                    usedCustomRepoUrls: ca.usedCustomRepoUrls || [],
+                    usedMcpServerUrls: ca.usedMcpServerUrls || [], // Add for child agents
                 };
             });
         }
@@ -348,13 +329,19 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
             agentDataToSubmit.platform = initialData.platform;
         }
 
-        // Transform tools for ADK: remove sourceRepoUrl and type from Gofannon/custom tools
         const adkReadyTools = (agentDataToSubmit.tools || []).map(tool => {
             if (tool.type === 'gofannon' || tool.type === 'custom_repo') {
                 const { sourceRepoUrl, type, ...adkToolProps } = tool;
                 return adkToolProps;
             }
-            return tool; // For ADK built-in tools, return as-is
+            // For MCP tools, pass them as they are; backend will create MCPToolset
+            if (tool.type === 'mcp') {
+                // Ensure essential fields for backend MCPToolset creation are present
+                // The backend will use mcpServerUrl and mcpToolName
+                return tool;
+            }
+            // ADK built-in tools removed
+            return tool;
         });
         agentDataToSubmit.tools = adkReadyTools;
 
@@ -390,18 +377,17 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     const handleExistingAgentSelected = (selectedAgentFullConfig) => {
         const newChildAgent = {
             ...selectedAgentFullConfig,
-            id: uuidv4(), // Assign new client-side ID
-            // Ensure all necessary fields from AgentForm are present or defaulted for the child
-            agentType: selectedAgentFullConfig.agentType || AGENT_TYPES[0], // Default if missing
+            id: uuidv4(),
+            agentType: selectedAgentFullConfig.agentType || AGENT_TYPES[0],
             selectedProviderId: selectedAgentFullConfig.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID,
-            // litellm_model_string here is the base model string or full custom string
             litellm_model_string: selectedAgentFullConfig.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID,
             litellm_api_base: selectedAgentFullConfig.litellm_api_base || null,
             litellm_api_key: selectedAgentFullConfig.litellm_api_key || null,
             instruction: selectedAgentFullConfig.instruction || '',
             tools: selectedAgentFullConfig.tools || [],
-            enableCodeExecution: selectedAgentFullConfig.enableCodeExecution || false,
+            // enableCodeExecution removed
             usedCustomRepoUrls: selectedAgentFullConfig.usedCustomRepoUrls || [],
+            usedMcpServerUrls: selectedAgentFullConfig.usedMcpServerUrls || [], // Add for child
             outputKey: selectedAgentFullConfig.outputKey || '',
             maxLoops: selectedAgentFullConfig.maxLoops || 3,
         };
@@ -426,7 +412,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
     if (agentType === 'SequentialAgent') childAgentSectionTitle = "Sequential Steps";
     if (agentType === 'ParallelAgent') childAgentSectionTitle = "Parallel Tasks";
 
-    const codeExecutionDisabledByToolSelection = selectedTools.length > 0;
+    // const codeExecutionDisabledByToolSelection = selectedTools.length > 0; // No longer needed
 
     return (
         <Paper elevation={3} sx={{ p: { xs: 2, md: 4 } }}>
@@ -564,22 +550,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                     required={showParentConfig}
                                 />
                             </Grid>
-                            <Grid item xs={12}>
-                                <FormControlLabel
-                                    control={
-                                        <Checkbox
-                                            checked={enableCodeExecution}
-                                            onChange={handleCodeExecutionChange}
-                                            name="enableCodeExecution"
-                                            disabled={codeExecutionDisabledByToolSelection}
-                                        />
-                                    }
-                                    label="Enable Built-in Code Execution"
-                                />
-                                <FormHelperText sx={{ml:3.5, mt:-0.5}}>
-                                    (Requires a compatible model. Cannot be used if other tools are selected.)
-                                </FormHelperText>
-                            </Grid>
+                            {/* Code Execution Checkbox Removed */}
                             <Grid item xs={12}>
                                 <Typography variant="subtitle1" sx={{mb:1}}>
                                     {agentType === 'LoopAgent' ? "Tools for Looped Agent" : "Tools for Agent"}
@@ -590,8 +561,9 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                     onRefreshGofannon={handleRefreshGofannonTools}
                                     loadingGofannon={loadingTools}
                                     gofannonError={toolError}
-                                    isCodeExecutionMode={enableCodeExecution}
+                                    // isCodeExecutionMode removed
                                     onUsedCustomRepoUrlsChange={handleUsedCustomRepoUrlsChange}
+                                    onUsedMcpServerUrlsChange={handleUsedMcpServerUrlsChange} // New prop
                                     availableGofannonTools={availableGofannonTools}
                                 />
                             </Grid>
@@ -647,7 +619,8 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                                                     secondary={
                                                         `Type: ${child.agentType || 'Agent'} | Model: ${child.litellm_model_string || 'N/A'} | ` +
                                                         `Tools: ${child.tools?.length || 0}${child.tools?.some(t => t.configuration) ? ' (Configured)' : ''} | ` +
-                                                        `Code Exec: ${child.enableCodeExecution ? 'Yes' : 'No'} | OutputKey: ${child.outputKey || 'N/A'}`
+                                                        // `Code Exec: ${child.enableCodeExecution ? 'Yes' : 'No'} | ` + // Removed Code Exec
+                                                        `OutputKey: ${child.outputKey || 'N/A'}`
                                                     }
                                                 />
                                                 <ListItemSecondaryAction>
@@ -689,7 +662,7 @@ const AgentForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
                 open={isChildFormOpen}
                 onClose={handleCloseChildForm}
                 onSave={handleSaveChildAgent}
-                childAgentData={editingChild} // This is initialData for the child form
+                childAgentData={editingChild}
                 availableGofannonTools={availableGofannonTools}
                 loadingGofannon={loadingTools}
                 gofannonError={toolError}
