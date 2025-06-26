@@ -104,6 +104,7 @@ export const deleteAgentDeployment = async (resourceName, agentDocId) => {
 export const checkAgentDeploymentStatus = async (agentDocId) => {
     try {
         const result = await checkVertexAgentDeploymentStatusCallable({ agentDocId });
+        console.log('checkAgentDeploymentStatus result:', result.data);
         return result.data;
     } catch (error) {
         console.error("Error checking agent deployment status:", error);
