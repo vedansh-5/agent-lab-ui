@@ -24,7 +24,7 @@ from handlers.mcp_handler import _list_mcp_server_tools_logic_async
 
 # --- Cloud Function Definitions ---
 
-@https_fn.on_call(memory=options.MemoryOption.MB_512)
+@https_fn.on_call(memory=options.MemoryOption.GB_1)
 @handle_exceptions_and_log
 def get_gofannon_tool_manifest(req: https_fn.CallableRequest):
     return _get_gofannon_tool_manifest_logic(req)
@@ -38,7 +38,7 @@ def deploy_agent_to_vertex(req: https_fn.CallableRequest):
     return _deploy_agent_to_vertex_logic(req)
 
 
-@https_fn.on_call(memory=options.MemoryOption.MB_512)
+@https_fn.on_call(memory=options.MemoryOption.GB_1)
 @handle_exceptions_and_log
 def delete_vertex_agent(req: https_fn.CallableRequest):
     if not req.auth:
@@ -54,14 +54,14 @@ def query_deployed_agent(req: https_fn.CallableRequest):
     return _query_deployed_agent_logic(req)
 
 
-@https_fn.on_call(memory=options.MemoryOption.MB_512)
+@https_fn.on_call(memory=options.MemoryOption.GB_1)
 @handle_exceptions_and_log
 def check_vertex_agent_deployment_status(req: https_fn.CallableRequest):
     if not req.auth:
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required to check agent status.")
     return _check_vertex_agent_deployment_status_logic(req)
 
-@https_fn.on_call(memory=options.MemoryOption.MB_512, timeout_sec=60)
+@https_fn.on_call(memory=options.MemoryOption.GB_1, timeout_sec=60)
 @handle_exceptions_and_log
 def fetch_web_page_content(req: https_fn.CallableRequest):
     return _fetch_web_page_content_logic(req)

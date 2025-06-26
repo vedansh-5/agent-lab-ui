@@ -3,13 +3,22 @@ import re
 import os
 import importlib
 import traceback
+import asyncio # Import asyncio
 from .core import logger
 from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent # LlmAgent is aliased as Agent
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.models.lite_llm import LiteLlm
 from google.genai import types as genai_types # For GenerateContentConfig
+# Updated import for MCPToolset and its params
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
-from google.adk.tools.mcp_tool.mcp_session_manager import SseServerParams
+
+from google.adk.tools.mcp_tool.mcp_session_manager import (
+    StreamableHTTPConnectionParams,
+    SseServerParams,
+)
+
+# SseServerParams was already imported from mcp_tool.mcp_toolset,
+# StreamableHTTPConnectionParams is also available there.
 
 # This mapping helps the backend determine LiteLLM prefixes and expected API key env vars.
 # It's a simplified version of what was in PYTHON_AGENT_CONSTANTS before,
@@ -32,7 +41,7 @@ BACKEND_LITELLM_PROVIDER_CONFIG = {
 }
 
 
-def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context_for_log: str = ""):
+async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context_for_log: str = ""): # Made async
     logger.info(f"Preparing kwargs for ADK agent '{adk_agent_name}' {context_for_log}. Original config name: '{agent_config.get('name', 'N/A')}'")
 
     instantiated_tools = []
@@ -42,7 +51,7 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
     for tc_idx, tc in enumerate(user_defined_tools_config):
         tool_type = tc.get('type')
         if tool_type == 'mcp':
-            server_url = tc.get('mcpServerUrl')
+            server_url = tc.get('mcpServerUrl') # This should be the full endpoint URL
             tool_name_on_server = tc.get('mcpToolName') # Original name on MCP server
             if server_url and tool_name_on_server:
                 if server_url not in mcp_tools_by_server:
@@ -51,11 +60,9 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
                 logger.info(f"Queued MCP tool '{tool_name_on_server}' from server '{server_url}' for agent '{adk_agent_name}'.")
             else:
                 logger.warn(f"Skipping MCP tool for agent '{adk_agent_name}' due to missing mcpServerUrl or mcpToolName: {tc}")
-                # Removed ADK built-in tool handling here, as they are no longer selectable from UI in this manner
-        # Gofannon and custom_repo tools are handled by instantiate_tool
         elif tool_type == 'gofannon' or tool_type == 'custom_repo':
             try:
-                tool_instance = instantiate_tool(tc) # instantiate_tool now only handles Gofannon/custom_repo
+                tool_instance = instantiate_tool(tc)
                 instantiated_tools.append(tool_instance)
                 logger.info(f"Successfully instantiated tool '{tc.get('id', f'index_{tc_idx}')}' (type: {tool_type}) for agent '{adk_agent_name}'.")
             except ValueError as e:
@@ -64,19 +71,37 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
             logger.warn(f"Unknown or unhandled tool type '{tool_type}' for agent '{adk_agent_name}'. Tool config: {tc}")
 
 
-            # After iterating all tool_configs, create MCPToolset instances
+            # After iterating all tool_configs, create MCPToolset instances using MCPToolset.from_server
     for server_url, tool_names_filter in mcp_tools_by_server.items():
         try:
-            # MCPToolset expects SseServerParams for URL-based connections.
-            # Ensure SseServerParams is imported.
-            mcp_toolset = MCPToolset(
-                connection_params=SseServerParams(url=server_url),
-                tool_filter=list(set(tool_names_filter)) # Use unique tool names for filter
+            connection_params = None
+            conn_type_log = ""
+            # The server_url from UI should be the full endpoint URL.
+            # e.g., http://localhost:8001/sse or http://localhost:8000/mcp
+            if server_url.endswith("/sse"): # Heuristic based on common SSE endpoint naming
+                connection_params = SseServerParams(url=server_url)
+                conn_type_log = "SSE"
+            else: # Default to StreamableHTTP for other URLs
+                # Ensure server_url is the correct endpoint for StreamableHTTP (e.g., ends with /mcp)
+                connection_params = StreamableHTTPConnectionParams(url=server_url)
+                conn_type_log = "StreamableHTTP"
+
+            unique_tool_filter = list(set(tool_names_filter))
+            logger.info(f"Attempting MCPToolset.from_server for '{server_url}' ({conn_type_log}) with tool filter: {unique_tool_filter} for agent '{adk_agent_name}'.")
+
+            # MCPToolset.from_server is an async class method.
+            # It returns a tuple: (MCPToolset instance, AsyncExitStack instance)
+            mcp_toolset_instance, _exit_stack = await MCPToolset(
+                connection_params=connection_params,
+                tool_filter=unique_tool_filter
             )
-            instantiated_tools.append(mcp_toolset)
-            logger.info(f"Added MCPToolset for server '{server_url}' to agent '{adk_agent_name}' with {len(set(tool_names_filter))} unique tools filtered: {list(set(tool_names_filter))}.")
+            # The ADK agent/runner is expected to manage the lifecycle of the mcp_toolset_instance,
+            # including any resources associated with the _exit_stack.
+            # We append the toolset instance directly.
+            instantiated_tools.append(mcp_toolset_instance)
+            logger.info(f"Successfully created and added MCPToolset (via from_server) for server '{server_url}' to agent '{adk_agent_name}' with {len(unique_tool_filter)} tools filtered.")
         except Exception as e_mcp_toolset:
-            logger.error(f"Failed to create MCPToolset for server '{server_url}' for agent '{adk_agent_name}': {e_mcp_toolset}")
+            logger.error(f"Failed to create MCPToolset via from_server for server '{server_url}' for agent '{adk_agent_name}': {type(e_mcp_toolset).__name__} - {e_mcp_toolset}")
             # Optionally, re-raise or add a placeholder error tool if critical
 
 
@@ -106,7 +131,7 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
     final_model_str_for_litellm = base_model_name_from_config
     if provider_backend_config["prefix"]:
         if selected_provider_id == "azure":
-            if not base_model_name_from_config.startswith("azure/"):
+            if not base_model_name_from_config.startswith("azure/"): # LiteLLM expects "azure/your-deployment-name"
                 final_model_str_for_litellm = f"azure/{base_model_name_from_config}"
         elif not base_model_name_from_config.startswith(provider_backend_config["prefix"] + "/"):
             final_model_str_for_litellm = f"{provider_backend_config['prefix']}/{base_model_name_from_config}"
@@ -115,23 +140,25 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
     final_api_key = user_api_key_override
     if not final_api_key and provider_backend_config["apiKeyEnv"]:
         final_api_key = os.getenv(provider_backend_config["apiKeyEnv"])
-        if not final_api_key and provider_backend_config["apiKeyEnv"] not in ["AWS_ACCESS_KEY_ID", "WATSONX_APIKEY"]:
+        if not final_api_key and provider_backend_config["apiKeyEnv"] not in ["AWS_ACCESS_KEY_ID", "WATSONX_APIKEY"]: # These have complex auth beyond just one key
             logger.warn(f"API key env var '{provider_backend_config['apiKeyEnv']}' for provider '{selected_provider_id}' not set, and no override provided. LiteLLM may fail if key is required by the provider or its default configuration.")
 
     if selected_provider_id == "azure":
-        if not os.getenv("AZURE_API_BASE") and not final_api_base:
+        if not os.getenv("AZURE_API_BASE") and not final_api_base: # AZURE_API_BASE is critical for Azure
             logger.error("Azure provider selected, but AZURE_API_BASE is not set in environment and no API Base override provided. LiteLLM will likely fail.")
-        if not os.getenv("AZURE_API_VERSION"):
+        if not os.getenv("AZURE_API_VERSION"): # AZURE_API_VERSION is also usually required
             logger.warn("Azure provider selected, but AZURE_API_VERSION is not set in environment. LiteLLM may require it.")
 
     if selected_provider_id == "watsonx":
         if not os.getenv("WATSONX_URL") and not final_api_base:
             logger.error("WatsonX provider: WATSONX_URL env var not set and not overridden by user. LiteLLM will likely fail.")
-        if not os.getenv("WATSONX_PROJECT_ID") and not agent_config.get("project_id"):
+        if not os.getenv("WATSONX_PROJECT_ID") and not agent_config.get("project_id"): # project_id can be in config or env
             logger.warn("WatsonX provider: WATSONX_PROJECT_ID env var not set and no project_id in agent_config. LiteLLM may require it.")
+
 
     logger.info(f"Configuring LiteLlm for agent '{adk_agent_name}' (Provider: {selected_provider_id}): "
                 f"Model='{final_model_str_for_litellm}', API Base='{final_api_base or 'Default/Env'}', KeyIsSet={(not not final_api_key) or (selected_provider_id in ['bedrock', 'watsonx'])}")
+
 
     model_constructor_kwargs = {"model": final_model_str_for_litellm}
     if final_api_base:
@@ -139,18 +166,22 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
     if final_api_key:
         model_constructor_kwargs["api_key"] = final_api_key
 
+        # Specific handling for WatsonX project_id and space_id
     if selected_provider_id == "watsonx":
         project_id_for_watsonx = agent_config.get("project_id") or os.getenv("WATSONX_PROJECT_ID")
         if project_id_for_watsonx:
             model_constructor_kwargs["project_id"] = project_id_for_watsonx
         else:
-            logger.warn(f"WatsonX project_id not found for agent {adk_agent_name}. This might be required.")
-        if base_model_name_from_config.startswith("deployment/"):
+            # project_id is often required by LiteLLM for watsonx
+            logger.warn(f"WatsonX project_id not found for agent {adk_agent_name}. This might be required by LiteLLM.")
+            # space_id for watsonx deployments
+        if base_model_name_from_config and base_model_name_from_config.startswith("deployment/"): # Heuristic for deployment models
             space_id_for_watsonx = agent_config.get("space_id") or os.getenv("WATSONX_DEPLOYMENT_SPACE_ID")
             if space_id_for_watsonx:
                 model_constructor_kwargs["space_id"] = space_id_for_watsonx
             else:
                 logger.warn(f"WatsonX deployment model used for {adk_agent_name} but space_id not found. Deployment may fail or use default space.")
+
 
     actual_model_for_adk = LiteLlm(**model_constructor_kwargs)
 
@@ -159,19 +190,18 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         "description": agent_config.get("description"),
         "model": actual_model_for_adk,
         "instruction": agent_config.get("instruction"),
-        "tools": instantiated_tools, # This now includes MCPToolsets if any
+        "tools": instantiated_tools,
         "output_key": agent_config.get("outputKey"),
     }
-    # Removed enableCodeExecution from here
 
     model_settings = agent_config.get("modelSettings", {})
-    current_generate_content_config_kwargs = {}
+    current_generate_content_config_kwargs = {} # For ADK Agent's direct model params
 
     if "temperature" in model_settings and model_settings["temperature"] is not None:
         try: agent_kwargs["temperature"] = float(model_settings["temperature"])
         except (ValueError, TypeError): logger.warning(f"Invalid temperature: {model_settings['temperature']}")
     if "maxOutputTokens" in model_settings and model_settings["maxOutputTokens"] is not None:
-        try: agent_kwargs["max_tokens"] = int(model_settings["maxOutputTokens"])
+        try: agent_kwargs["max_tokens"] = int(model_settings["maxOutputTokens"]) # Renamed to max_tokens for ADK Agent
         except (ValueError, TypeError): logger.warning(f"Invalid maxOutputTokens: {model_settings['maxOutputTokens']}")
     if "topP" in model_settings and model_settings["topP"] is not None:
         try: current_generate_content_config_kwargs["top_p"] = float(model_settings["topP"])
@@ -183,37 +213,47 @@ def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context
         current_generate_content_config_kwargs["stop_sequences"] = [str(seq) for seq in model_settings["stopSequences"]]
 
     if current_generate_content_config_kwargs:
+        # These are passed as direct kwargs to the ADK Agent constructor if supported,
+        # or used to construct a GenerateContentConfig if the agent model expects that.
+        # LiteLlm model wrapper in ADK might pick these up if passed to Agent.
         agent_kwargs.update(current_generate_content_config_kwargs)
         logger.info(f"Agent '{adk_agent_name}' has additional model parameters: {current_generate_content_config_kwargs}")
+
 
     return {k: v for k, v in agent_kwargs.items() if v is not None}
 
 def generate_vertex_deployment_display_name(agent_config_name: str, agent_doc_id: str) -> str:
     base_name = agent_config_name or f"adk-agent-{agent_doc_id}"
+    # Vertex AI display names must be 4-63 chars, start with letter, contain only lowercase letters, numbers, hyphens.
     sanitized_base = re.sub(r'[^a-z0-9-]+', '-', base_name.lower()).strip('-')
-    if not sanitized_base:
-        sanitized_base = f"agent-{agent_doc_id[:8]}"
-    if not sanitized_base[0].isalpha() or len(sanitized_base) < 2 :
-        core_name = sanitized_base[:59]
+    if not sanitized_base: # If name was all invalid chars
+        sanitized_base = f"agent-{agent_doc_id[:8]}" # Fallback using doc ID part
+
+    # Ensure starts with a letter
+    if not sanitized_base[0].isalpha():
+        # Vertex display names must start with a letter.
+        # Max length is 63. If prepending 'a-' makes it too long, truncate from the end of core_name.
+        core_name = sanitized_base[:59] # Max 59 to allow for 'a-' prefix and ensure it's not too long
         deployment_display_name = f"a-{core_name}"
     else:
         deployment_display_name = sanitized_base
+
+        # Ensure minimum length of 4 (Vertex requirement)
+    # Ensure final length is within 63 characters
     deployment_display_name = deployment_display_name[:63]
-    while len(deployment_display_name) < 4 and len(deployment_display_name) < 63 :
-        deployment_display_name += "x"
-    return deployment_display_name.strip('-')[:63]
+    while len(deployment_display_name) < 4 and len(deployment_display_name) < 63 : # Check max length again here
+        deployment_display_name += "x" # Pad if too short
+
+    return deployment_display_name.strip('-')[:63] # Final strip and length check
 
 def instantiate_tool(tool_config):
-    # This function now only handles Gofannon and custom_repo tools.
-    # MCP tools are handled directly in _prepare_agent_kwargs_from_config to create MCPToolsets.
-    # ADK built-in tools (like google_search string) are removed.
     logger.info(f"Attempting to instantiate Gofannon/Custom tool: {tool_config.get('id', 'N/A')}")
     if not isinstance(tool_config, dict):
         raise ValueError(f"Tool configuration must be a dictionary, got {type(tool_config)}")
 
     module_path = tool_config.get("module_path")
     class_name = tool_config.get("class_name")
-    tool_type = tool_config.get("type") # Should be 'gofannon' or 'custom_repo'
+    tool_type = tool_config.get("type")
 
     if not (tool_type == 'gofannon' or tool_type == 'custom_repo'):
         raise ValueError(f"instantiate_tool received unexpected tool type: {tool_type}. Expected 'gofannon' or 'custom_repo'.")
@@ -230,14 +270,17 @@ def instantiate_tool(tool_config):
 
             instance = ToolClass(**instance_specific_kwargs)
 
+            # If the tool has an 'export_to_adk' method, call it.
+            # This is a convention for Gofannon tools primarily.
             if hasattr(instance, 'export_to_adk') and callable(instance.export_to_adk):
                 adk_tool_spec = instance.export_to_adk()
                 tool_source_type = "Gofannon-compatible tool" if tool_type == 'gofannon' else "Custom Repository tool"
                 logger.info(f"Successfully instantiated and exported {tool_source_type} '{tool_config.get('id', class_name)}' to ADK spec.")
                 return adk_tool_spec
             else:
+                # If no export_to_adk, assume it's already an ADK-compatible tool instance.
                 logger.info(f"Successfully instantiated tool '{tool_config.get('id', class_name)}' (assumed ADK native or directly compatible).")
-                return instance
+                return instance  # Return the instance directly
         except Exception as e:
             tool_id_for_log = tool_config.get('id', class_name or 'N/A')
             if isinstance(e, (ImportError, ModuleNotFoundError)):
@@ -250,31 +293,48 @@ def instantiate_tool(tool_config):
 
 
 def sanitize_adk_agent_name(name_str: str, prefix_if_needed: str = "agent_") -> str:
+    # ADK agent names should be valid Python identifiers.
+    # Replace non-alphanumeric (excluding underscore) with underscore
     sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name_str)
+    # Remove leading/trailing underscores that might result from replacement
     sanitized = sanitized.strip('_')
+    # If starts with a digit, prepend an underscore (or prefix_if_needed if that's more robust)
     if sanitized and sanitized[0].isdigit():
-        sanitized = f"_{sanitized}"
+        sanitized = f"_{sanitized}" # Python ids can start with _
+
+    # If empty after sanitization or still doesn't start with letter/_ , use prefix
     if not sanitized or not (sanitized[0].isalpha() or sanitized[0] == '_'):
-        temp_name = re.sub(r'[^a-zA-Z0-9_]', '_', name_str)
+        # Fallback to a more generic construction if initial sanitization fails badly
+        temp_name = re.sub(r'[^a-zA-Z0-9_]', '_', name_str) # Re-sanitize original
         sanitized = f"{prefix_if_needed.strip('_')}_{temp_name.strip('_')}"
-        sanitized = re.sub(r'_+', '_', sanitized).strip('_')
-    if not sanitized:
+        sanitized = re.sub(r'_+', '_', sanitized).strip('_') # Consolidate multiple underscores
+
+    if not sanitized: # Ultimate fallback if all else fails
         sanitized = f"{prefix_if_needed.strip('_')}_default_agent_name"
-    sanitized = sanitized[:63]
+
+        # Ensure it's a valid Python identifier (simple check, not exhaustive)
+    # Python identifiers: ^[a-zA-Z_][a-zA-Z0-9_]*$
+    # Max length (e.g. Vertex display names often have limits like 63)
+    sanitized = sanitized[:63] # Apply a practical length limit
+
     if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", sanitized):
+        # If it's *still* not valid (e.g., all underscores, or somehow bad), generate a safe name.
         logger.warn(f"Sanitized name '{sanitized}' from '{name_str}' is still not a valid Python identifier. Using a generic fallback.")
-        generic_name = f"{prefix_if_needed.strip('_')}_{os.urandom(4).hex()}"
-        return generic_name[:63]
+        generic_name = f"{prefix_if_needed.strip('_')}_{os.urandom(4).hex()}" # Random suffix for uniqueness
+        return generic_name[:63] # Ensure length constraint
+
     return sanitized
 
-def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context="root", child_index=0):
+async def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context="root", child_index=0): # Made async
     original_agent_name = agent_config.get('name', f'agent_cfg_{child_index}')
+    # Make ADK agent names more unique to avoid conflicts if multiple deployments happen
+    # or if names are similar across different parts of a composite agent.
     unique_base_name_for_adk = f"{original_agent_name}_{parent_adk_name_for_context}_{os.urandom(2).hex()}"
     adk_agent_name = sanitize_adk_agent_name(unique_base_name_for_adk, prefix_if_needed=f"agent_{child_index}_")
 
     agent_type_str = agent_config.get("agentType")
     AgentClass = {
-        "Agent": Agent,
+        "Agent": Agent, # This is LlmAgent
         "SequentialAgent": SequentialAgent,
         "LoopAgent": LoopAgent,
         "ParallelAgent": ParallelAgent
@@ -287,8 +347,8 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
 
     logger.info(f"Instantiating ADK Agent: Name='{adk_agent_name}', Type='{AgentClass.__name__}', Original Config Name='{original_agent_name}' (Context: parent='{parent_adk_name_for_context}', index={child_index})")
 
-    if AgentClass == Agent:
-        agent_kwargs = _prepare_agent_kwargs_from_config(
+    if AgentClass == Agent: # LlmAgent
+        agent_kwargs = await _prepare_agent_kwargs_from_config( # Await the async call
             agent_config,
             adk_agent_name,
             context_for_log=f"(type: LlmAgent, parent: {parent_adk_name_for_context}, original: {original_agent_name})"
@@ -298,10 +358,11 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
             return Agent(**agent_kwargs)
         except Exception as e_agent_init:
             logger.error(f"Initialization Error for LlmAgent '{adk_agent_name}' (from config '{original_agent_name}'): {e_agent_init}")
-            logger.error(f"Args passed: {agent_kwargs}")
+            logger.error(f"Args passed: {agent_kwargs}") # Log the arguments that caused the error
             detailed_traceback = traceback.format_exc()
             logger.error(f"Traceback:\n{detailed_traceback}")
             raise ValueError(f"Failed to instantiate LlmAgent '{original_agent_name}': {e_agent_init}.")
+
 
     elif AgentClass == SequentialAgent or AgentClass == ParallelAgent:
         child_agent_configs = agent_config.get("childAgents", [])
@@ -312,21 +373,23 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
             instantiated_child_agents = []
             for idx, child_config in enumerate(child_agent_configs):
                 try:
-                    if 'selectedProviderId' not in child_config:
-                        logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'selectedProviderId'. Defaulting.")
-                        child_config['selectedProviderId'] = "openai"
+                    # Basic validation/defaulting for child agent configs if necessary
+                    if 'selectedProviderId' not in child_config: # Example default
+                        logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'selectedProviderId'. Defaulting to OpenAI (example).")
+                        child_config['selectedProviderId'] = "openai" # Or a more sensible default
                     if 'litellm_model_string' not in child_config:
-                        logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'litellm_model_string'. Defaulting.")
-                        child_config['litellm_model_string'] = "gpt-3.5-turbo"
+                        logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'litellm_model_string'. Defaulting to gpt-3.5-turbo (example).")
+                        child_config['litellm_model_string'] = "gpt-3.5-turbo" # Example default
 
-                    child_agent_instance = instantiate_adk_agent_from_config(
+                    child_agent_instance = await instantiate_adk_agent_from_config( # Await the recursive async call
                         child_config,
-                        parent_adk_name_for_context=adk_agent_name,
+                        parent_adk_name_for_context=adk_agent_name, # Pass current agent's ADK name as context
                         child_index=idx
                     )
                     instantiated_child_agents.append(child_agent_instance)
                 except Exception as e_child:
                     logger.error(f"Failed to instantiate child agent at index {idx} for {AgentClass.__name__} '{original_agent_name}': {e_child}")
+                    # Potentially re-raise or handle to allow partial construction if desired
                     raise ValueError(f"Error processing child agent for '{original_agent_name}': {e_child}")
 
         orchestrator_kwargs = {
@@ -338,18 +401,19 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
         return AgentClass(**orchestrator_kwargs)
 
     elif AgentClass == LoopAgent:
-        looped_agent_config_name = f"{original_agent_name}_looped_child_config"
+        # LoopAgent wraps a single LlmAgent (defined by the LoopAgent's own config fields)
+        looped_agent_config_name = f"{original_agent_name}_looped_child_config" # For logging
         looped_agent_adk_name = sanitize_adk_agent_name(f"{adk_agent_name}_looped_child_instance", prefix_if_needed="looped_")
 
-        looped_agent_kwargs = _prepare_agent_kwargs_from_config(
+        # The LoopAgent's main config (instruction, model, tools) defines the agent to be looped.
+        looped_agent_kwargs = await _prepare_agent_kwargs_from_config( # Await the async call
             agent_config, # Pass the main agent_config, as LoopAgent's own config defines the looped agent
             looped_agent_adk_name,
             context_for_log=f"(looped child of LoopAgent '{adk_agent_name}', original config: '{looped_agent_config_name}')"
         )
-        # Removed enableCodeExecution from here
         logger.debug(f"Final kwargs for Looped Child ADK Agent '{looped_agent_adk_name}' (for LoopAgent '{adk_agent_name}'): {looped_agent_kwargs}")
         try:
-            looped_child_agent_instance = Agent(**looped_agent_kwargs)
+            looped_child_agent_instance = Agent(**looped_agent_kwargs) # Agent is LlmAgent
         except Exception as e_loop_child_init:
             logger.error(f"Initialization Error for Looped Child Agent '{looped_agent_adk_name}' (from config '{looped_agent_config_name}'): {e_loop_child_init}")
             logger.error(f"Args passed to looped child Agent constructor: {looped_agent_kwargs}")
@@ -357,10 +421,10 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
             logger.error(f"Traceback:\n{detailed_traceback}")
             raise ValueError(f"Failed to instantiate looped child agent for '{original_agent_name}': {e_loop_child_init}.")
 
-        max_loops_val_str = agent_config.get("maxLoops", "3")
+        max_loops_val_str = agent_config.get("maxLoops", "3") # Default to 3 loops
         try:
             max_loops_val = int(max_loops_val_str)
-            if max_loops_val <= 0:
+            if max_loops_val <= 0: # Max loops must be positive
                 logger.warning(f"MaxLoops for LoopAgent '{adk_agent_name}' is {max_loops_val}, which is not positive. Defaulting to 3.")
                 max_loops_val = 3
         except ValueError:
@@ -371,13 +435,15 @@ def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_context=
         loop_agent_kwargs = {
             "name": adk_agent_name,
             "description": agent_config.get("description"),
-            "agent": looped_child_agent_instance,
+            "agent": looped_child_agent_instance, # The LlmAgent to loop
             "max_loops": max_loops_val
+            # Potentially other LoopAgent specific params like "stopping_condition" if supported/configured
         }
         logger.debug(f"Final kwargs for LoopAgent '{adk_agent_name}': {{name, description, max_loops, agent_name: {looped_child_agent_instance.name}}}")
         return LoopAgent(**loop_agent_kwargs)
 
     else:
+        # This case should be caught by the AgentClass check at the beginning
         raise ValueError(f"Unhandled agent type '{agent_type_str}' during recursive instantiation for '{original_agent_name}'.")
 
 
@@ -386,4 +452,4 @@ __all__ = [
     'instantiate_tool',
     'sanitize_adk_agent_name',
     'instantiate_adk_agent_from_config'
-]  
+]
