@@ -91,10 +91,13 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
 
             # MCPToolset.from_server is an async class method.
             # It returns a tuple: (MCPToolset instance, AsyncExitStack instance)
-            mcp_toolset_instance, _exit_stack = await MCPToolset(
-                connection_params=connection_params,
-                tool_filter=unique_tool_filter
-            )
+            async with MCPToolset(
+                    connection_params=connection_params,
+                    tool_filter=unique_tool_filter
+            ) as toolset:
+                mcp_toolset_instance = await toolset.load_tools()
+
+
             # The ADK agent/runner is expected to manage the lifecycle of the mcp_toolset_instance,
             # including any resources associated with the _exit_stack.
             # We append the toolset instance directly.
