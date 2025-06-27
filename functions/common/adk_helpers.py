@@ -99,7 +99,8 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
             # It returns a tuple: (MCPToolset instance, AsyncExitStack instance)
             toolset = MCPToolset(
                     connection_params=connection_params,
-                    tool_filter=unique_tool_filter
+                    tool_filter=unique_tool_filter,
+                    errlog= None # Otherwise has issues with pickling, hack should be directed to firebase logger.
             )
             logger.info(f"toolset: {toolset}")
             mcp_toolset_instance = toolset
