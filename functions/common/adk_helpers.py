@@ -17,6 +17,12 @@ from google.adk.tools.mcp_tool.mcp_session_manager import (
     SseServerParams,
 )
 
+from google.adk.auth.auth_schemes import AuthScheme
+from google.adk.auth.auth_credential import AuthCredential, AuthCredentialTypes, HttpAuth, HttpCredentials
+from fastapi.openapi.models import APIKey, APIKeyIn, HTTPBearer
+from google.adk.auth.auth_schemes import AuthSchemeType
+
+
 # SseServerParams was already imported from mcp_tool.mcp_toolset,
 # StreamableHTTPConnectionParams is also available there.
 
@@ -40,30 +46,82 @@ BACKEND_LITELLM_PROVIDER_CONFIG = {
     "custom": {"prefix": None, "apiKeyEnv": None} # No prefix, user provides full string
 }
 
+def _create_mcp_auth_objects(auth_config: dict | None) -> tuple[AuthScheme | None, AuthCredential | None]:
+    """
+    Creates ADK AuthScheme and AuthCredential objects from a UI-provided auth dictionary.
+    """
+    if not auth_config:
+        return None, None
+
+    auth_type = auth_config.get("type")
+
+    try:
+        if auth_type == "bearer":
+            token = auth_config.get("token")
+            if not token:
+                logger.warn("MCP Auth: Bearer token type specified but token is missing.")
+                return None, None
+                # For Bearer, the scheme is http and the credential carries the token.
+            scheme = HTTPBearer()
+            cred = AuthCredential(
+                auth_type=AuthCredentialTypes.HTTP,
+                http=HttpAuth(scheme="bearer", credentials=HttpCredentials(token=token))
+            )
+            logger.info("Created Bearer token AuthScheme and AuthCredential for MCP.")
+            return scheme, cred
+
+        elif auth_type == "apiKey":
+            key = auth_config.get("key")
+            name = auth_config.get("name")
+            location = auth_config.get("in")
+
+            if not all([key, name, location]):
+                logger.warn("MCP Auth: API Key type specified but key, name, or location is missing.")
+                return None, None
+            if location != "header":
+                logger.warn(f"MCP Auth: API Key location '{location}' is not supported. Only 'header' is supported.")
+                return None, None
+
+                # For API Key, the scheme defines where to put it, and the credential holds the value.
+            scheme = APIKey(name=name, in_=APIKeyIn.header)
+            cred = AuthCredential(auth_type=AuthCredentialTypes.API_KEY, api_key=key)
+            logger.info(f"Created API Key AuthScheme (header: {name}) and AuthCredential for MCP.")
+            return scheme, cred
+
+        logger.warn(f"MCP Auth: Unsupported auth type '{auth_type}' received.")
+        return None, None
+    except Exception as e:
+        logger.error(f"Error creating MCP auth objects for config {auth_config}: {e}")
+        return None, None
 
 async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context_for_log: str = ""): # Made async
     logger.info(f"Preparing kwargs for ADK agent '{adk_agent_name}' {context_for_log}. Original config name: '{agent_config.get('name', 'N/A')}'")
 
     instantiated_tools = []
-    mcp_tools_by_server = {} # {'server_url_1': ['tool_name_A', 'tool_name_B'], ...}
+    mcp_tools_by_server_and_auth = {}
     user_defined_tools_config = agent_config.get("tools", [])
     logger.info(f"user_defined_tools_config for agent '{adk_agent_name}': {user_defined_tools_config}")
     for tc_idx, tc in enumerate(user_defined_tools_config):
         tool_type = tc.get('type')
         if tool_type is None and tc.get('module_path') and tc.get('class_name'):
-            # If type is missing but module_path and class_name are present, assume it's a gofannon tool
             tool_type = 'gofannon'
-            tc['type'] = 'gofannon'  # Set the type for downstream processing
+            tc['type'] = 'gofannon'
             logger.info(f"Auto-detected tool type 'gofannon' for tool with module_path: {tc.get('module_path')}")
 
         if tool_type == 'mcp':
-            server_url = tc.get('mcpServerUrl') # This should be the full endpoint URL
-            tool_name_on_server = tc.get('mcpToolName') # Original name on MCP server
+            server_url = tc.get('mcpServerUrl')
+            tool_name_on_server = tc.get('mcpToolName')
+            auth_config_from_ui = tc.get('auth') # New: get auth config
+
+            # Create a hashable key for the dictionary
+            auth_key = frozenset(auth_config_from_ui.items()) if auth_config_from_ui else None
+            dict_key = (server_url, auth_key)
+
             if server_url and tool_name_on_server:
-                if server_url not in mcp_tools_by_server:
-                    mcp_tools_by_server[server_url] = []
-                mcp_tools_by_server[server_url].append(tool_name_on_server)
-                logger.info(f"Queued MCP tool '{tool_name_on_server}' from server '{server_url}' for agent '{adk_agent_name}'.")
+                if dict_key not in mcp_tools_by_server_and_auth:
+                    mcp_tools_by_server_and_auth[dict_key] = []
+                mcp_tools_by_server_and_auth[dict_key].append(tool_name_on_server)
+                logger.info(f"Queued MCP tool '{tool_name_on_server}' from server '{server_url}' (Auth: {bool(auth_config_from_ui)}) for agent '{adk_agent_name}'.")
             else:
                 logger.warn(f"Skipping MCP tool for agent '{adk_agent_name}' due to missing mcpServerUrl or mcpToolName: {tc}")
         elif tool_type == 'gofannon' or tool_type == 'custom_repo':
@@ -78,42 +136,37 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
 
 
             # After iterating all tool_configs, create MCPToolset instances using MCPToolset.from_server
-    for server_url, tool_names_filter in mcp_tools_by_server.items():
+    for (server_url, auth_key), tool_names_filter in mcp_tools_by_server_and_auth.items():
         try:
+            auth_config_dict = dict(auth_key) if auth_key else None
+            auth_scheme, auth_credential = _create_mcp_auth_objects(auth_config_dict)
+
             connection_params = None
             conn_type_log = ""
-            # The server_url from UI should be the full endpoint URL.
-            # e.g., http://localhost:8001/sse or http://localhost:8000/mcp
-            if server_url.endswith("/sse"): # Heuristic based on common SSE endpoint naming
+            if server_url.endswith("/sse"):
                 connection_params = SseServerParams(url=server_url)
                 conn_type_log = "SSE"
-            else: # Default to StreamableHTTP for other URLs
-                # Ensure server_url is the correct endpoint for StreamableHTTP (e.g., ends with /mcp)
+            else:
                 connection_params = StreamableHTTPConnectionParams(url=server_url)
                 conn_type_log = "StreamableHTTP"
 
             unique_tool_filter = list(set(tool_names_filter))
-            logger.info(f"Attempting MCPToolset.from_server for '{server_url}' ({conn_type_log}) with tool filter: {unique_tool_filter} for agent '{adk_agent_name}'.")
+            logger.info(f"Attempting to create MCPToolset for '{server_url}' ({conn_type_log}) with tool filter: {unique_tool_filter} for agent '{adk_agent_name}'. Auth provided: {bool(auth_scheme)}")
 
-            # MCPToolset.from_server is an async class method.
-            # It returns a tuple: (MCPToolset instance, AsyncExitStack instance)
             toolset = MCPToolset(
-                    connection_params=connection_params,
-                    tool_filter=unique_tool_filter,
-                    errlog= None # Otherwise has issues with pickling, hack should be directed to firebase logger.
+                connection_params=connection_params,
+                tool_filter=unique_tool_filter,
+                auth_scheme=auth_scheme,
+                auth_credential=auth_credential,
+                errlog= None
             )
             logger.info(f"toolset: {toolset}")
             mcp_toolset_instance = toolset
 
-
-            # The ADK agent/runner is expected to manage the lifecycle of the mcp_toolset_instance,
-            # including any resources associated with the _exit_stack.
-            # We append the toolset instance directly.
             instantiated_tools.append(mcp_toolset_instance)
-            logger.info(f"Successfully created and added MCPToolset (via from_server) for server '{server_url}' to agent '{adk_agent_name}' with {len(unique_tool_filter)} tools filtered.")
+            logger.info(f"Successfully created and added MCPToolset for server '{server_url}' to agent '{adk_agent_name}' with {len(unique_tool_filter)} tools filtered.")
         except Exception as e_mcp_toolset:
-            logger.error(f"Failed to create MCPToolset via from_server for server '{server_url}' for agent '{adk_agent_name}': {type(e_mcp_toolset).__name__} - {e_mcp_toolset}")
-            # Optionally, re-raise or add a placeholder error tool if critical
+            logger.error(f"Failed to create MCPToolset for server '{server_url}' for agent '{adk_agent_name}': {type(e_mcp_toolset).__name__} - {e_mcp_toolset}")
 
 
     selected_provider_id = agent_config.get("selectedProviderId")
@@ -210,16 +263,16 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
 
     if "temperature" in model_settings and model_settings["temperature"] is not None:
         try: agent_kwargs["temperature"] = float(model_settings["temperature"])
-        except (ValueError, TypeError): logger.warning(f"Invalid temperature: {model_settings['temperature']}")
+        except (ValueError, TypeError): logger.warn(f"Invalid temperature: {model_settings['temperature']}")
     if "maxOutputTokens" in model_settings and model_settings["maxOutputTokens"] is not None:
         try: agent_kwargs["max_tokens"] = int(model_settings["maxOutputTokens"]) # Renamed to max_tokens for ADK Agent
-        except (ValueError, TypeError): logger.warning(f"Invalid maxOutputTokens: {model_settings['maxOutputTokens']}")
+        except (ValueError, TypeError): logger.warn(f"Invalid maxOutputTokens: {model_settings['maxOutputTokens']}")
     if "topP" in model_settings and model_settings["topP"] is not None:
         try: current_generate_content_config_kwargs["top_p"] = float(model_settings["topP"])
-        except (ValueError, TypeError): logger.warning(f"Invalid topP: {model_settings['topP']}")
+        except (ValueError, TypeError): logger.warn(f"Invalid topP: {model_settings['topP']}")
     if "topK" in model_settings and model_settings["topK"] is not None:
         try: current_generate_content_config_kwargs["top_k"] = int(model_settings["topK"])
-        except (ValueError, TypeError): logger.warning(f"Invalid topK: {model_settings['topK']}")
+        except (ValueError, TypeError): logger.warn(f"Invalid topK: {model_settings['topK']}")
     if "stopSequences" in model_settings and isinstance(model_settings["stopSequences"], list):
         current_generate_content_config_kwargs["stop_sequences"] = [str(seq) for seq in model_settings["stopSequences"]]
 

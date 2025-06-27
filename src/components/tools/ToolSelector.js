@@ -1,5 +1,5 @@
 // src/components/tools/ToolSelector.js
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
     Typography, Button, Checkbox, FormControlLabel, FormGroup,
     Box, CircularProgress, Alert, Paper, Grid, FormHelperText, IconButton, Tooltip,
@@ -10,9 +10,11 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
-import LanguageIcon from '@mui/icons-material/Language'; // For MCP
+
+import VpnKeyIcon from '@mui/icons-material/VpnKey';
 
 import ToolSetupDialog from './ToolSetupDialog';
+import McpAuthDialog from './McpAuthDialog'; // New Auth Dialog
 import { listMcpServerTools } from '../../services/agentService'; // New service import
 
 
@@ -76,10 +78,13 @@ const ToolSelector = ({
     const [loadedCustomRepos, setLoadedCustomRepos] = useState([]);
     const [loadingCustomRepo, setLoadingCustomRepo] = useState(false);
 
-    // New MCP State
+    // --- New/Modified MCP State ---
     const [mcpServerUrlInput, setMcpServerUrlInput] = useState('');
-    const [loadedMcpServers, setLoadedMcpServers] = useState([]); // Array of {url, tools, error, loading}
-    const [loadingMcpServerTools, setLoadingMcpServerTools] = useState(false);
+    // State now includes auth config for each server
+    const [loadedMcpServers, setLoadedMcpServers] = useState([]); // Array of {url, tools, error, loading, auth}
+    const [loadingMcpServerUrl, setLoadingMcpServerUrl] = useState(null); // Track which server is loading
+    const [isMcpAuthDialogOpen, setIsMcpAuthDialogOpen] = useState(false);
+    const [serverForAuthSetup, setServerForAuthSetup] = useState(null);
 
 
     const allDisplayableTools = useMemo(() => {
@@ -97,7 +102,8 @@ const ToolSelector = ({
                     id: `mcp:${server.url}:${t.name}`, // Create a unique ID for UI selection
                     mcpServerUrl: server.url,
                     mcpToolName: t.name, // Original name for backend filter
-                    type: 'mcp'
+                    type: 'mcp',
+                    auth: server.auth // *** Attach the server's auth config to the tool ***
                 }));
             }
             return acc;
@@ -200,43 +206,52 @@ const ToolSelector = ({
         setLoadingCustomRepo(false);
     };
 
-    // New: Handle loading tools from MCP Server
-    const handleLoadMcpServerTools = async () => {
+    // --- New/Modified MCP Handlers ---
+    const handleAddMcpServer = () => {
         if (!mcpServerUrlInput.trim()) return;
         const serverUrl = mcpServerUrlInput.trim();
-
-        // Check if already loaded or loading
-        const existingServerEntry = loadedMcpServers.find(s => s.url === serverUrl);
-        if (existingServerEntry?.loading || (existingServerEntry && !existingServerEntry.error)) {
-            alert(`Tools from ${serverUrl} are already loaded or currently loading.`);
+        if (loadedMcpServers.some(s => s.url === serverUrl)) {
+            alert("This MCP server URL has already been added.");
             return;
         }
+        setLoadedMcpServers(prev => [...prev, { url: serverUrl, tools: null, error: null, loading: false, auth: null }]);
+        setMcpServerUrlInput('');
+    };
 
-        setLoadingMcpServerTools(true); // General loading indicator if needed, or manage per-server
-        // Update specific server entry to loading: true
-        setLoadedMcpServers(prev => {
-            const existing = prev.find(s => s.url === serverUrl);
-            if (existing) {
-                return prev.map(s => s.url === serverUrl ? { ...s, loading: true, error: null } : s);
-            }
-            return [...prev, { url: serverUrl, tools: [], error: null, loading: true }];
-        });
+    const handleLoadMcpServerTools = async (serverUrl) => {
+        const serverIndex = loadedMcpServers.findIndex(s => s.url === serverUrl);
+        if (serverIndex === -1) return;
+
+        setLoadingMcpServerUrl(serverUrl);
+        // Reset previous tools/error for a fresh load
+        setLoadedMcpServers(prev => prev.map((s, i) => i === serverIndex ? { ...s, loading: true, error: null, tools: null } : s));
 
         try {
-            const result = await listMcpServerTools(serverUrl); // Call new service
+            const serverToLoad = loadedMcpServers[serverIndex];
+            const result = await listMcpServerTools(serverUrl, serverToLoad.auth); // Pass auth config
             if (result.success && Array.isArray(result.tools)) {
-                setLoadedMcpServers(prev => prev.map(s => s.url === serverUrl ? { ...s, tools: result.tools, error: null, loading: false } : s));
-                setMcpServerUrlInput(''); // Clear input on success
+                setLoadedMcpServers(prev => prev.map((s, i) => i === serverIndex ? { ...s, tools: result.tools, error: null, loading: false } : s));
             } else {
-                const errorMsg = result.message || "Failed to load tools from MCP server.";
-                setLoadedMcpServers(prev => prev.map(s => s.url === serverUrl ? { ...s, tools: [], error: errorMsg, loading: false } : s));
+                setLoadedMcpServers(prev => prev.map((s, i) => i === serverIndex ? { ...s, tools: null, error: result.message || "Failed to load tools.", loading: false } : s));
             }
         } catch (error) {
-            const errorMsg = error.message || "An unexpected error occurred while fetching MCP tools.";
-            setLoadedMcpServers(prev => prev.map(s => s.url === serverUrl ? { ...s, tools: [], error: errorMsg, loading: false } : s));
+            setLoadedMcpServers(prev => prev.map((s, i) => i === serverIndex ? { ...s, tools: null, error: error.message || "An unexpected error occurred.", loading: false } : s));
         } finally {
-            setLoadingMcpServerTools(false);
+            setLoadingMcpServerUrl(null);
         }
+    };
+
+    const openMcpAuthDialog = (server) => {
+        setServerForAuthSetup(server);
+        setIsMcpAuthDialogOpen(true);
+    };
+
+    const handleSaveMcpAuth = (serverUrl, authData) => {
+        setLoadedMcpServers(prev =>
+            prev.map(s => s.url === serverUrl ? { ...s, auth: authData } : s)
+        );
+        // After saving, you might want to automatically re-fetch tools
+        handleLoadMcpServerTools(serverUrl);
     };
 
 
@@ -247,7 +262,6 @@ const ToolSelector = ({
     };
 
     const handleToolToggle = (toolManifestEntry, toolTypeFromManifest) => {
-        // isCodeExecutionMode removed
         const isCurrentlySelected = selectedTools.some(st => st.id === toolManifestEntry.id);
         let newSelectedTools;
 
@@ -273,10 +287,10 @@ const ToolSelector = ({
                     description: toolManifestEntry.description,
                     type: 'mcp',
                     mcpServerUrl: toolManifestEntry.mcpServerUrl,
-                    mcpToolName: toolManifestEntry.mcpToolName // Original name from server
+                    mcpToolName: toolManifestEntry.mcpToolName,
+                    auth: toolManifestEntry.auth // *** IMPORTANT: Persist auth config ***
                 };
             }
-            // ADK built-in tool cases removed
             else {
                 return;
             }
@@ -324,14 +338,12 @@ const ToolSelector = ({
             .filter(st => st.type === 'custom_repo' && st.sourceRepoUrl)
             .map(st => st.sourceRepoUrl);
         onUsedCustomRepoUrlsChange(Array.from(new Set(currentCustomRepoUrls)));
-        // MCP URLs don't change here, they are part of the base tool data
         setIsSetupDialogOpen(false);
         setToolForSetup(null);
         setExistingConfigForSetup(null);
     };
 
     const handleEditConfiguration = (toolId) => {
-        // isCodeExecutionMode removed
         const toolManifestEntry = allDisplayableTools.find(t => t.id === toolId);
         const selectedToolEntry = selectedTools.find(st => st.id === toolId);
 
@@ -350,7 +362,6 @@ const ToolSelector = ({
     const getToolDisplayName = (tool) => {
         let displayName = tool.name;
         if (tool.type === 'mcp') {
-            // Shorten server URL for display if it's too long
             let serverDisplay = tool.mcpServerUrl;
             try {
                 const urlObj = new URL(tool.mcpServerUrl);
@@ -376,7 +387,7 @@ const ToolSelector = ({
                         variant="outlined"
                         size="small"
                         onClick={(e) => { e.stopPropagation(); onRefreshGofannon(); }}
-                        disabled={loadingGofannon} // isCodeExecutionMode removed
+                        disabled={loadingGofannon}
                         startIcon={loadingGofannon ? <CircularProgress size={16} /> : <RefreshIcon />}
                         sx={{ order: 2 }}
                     >
@@ -389,13 +400,12 @@ const ToolSelector = ({
 
                     {!loadingGofannon && Object.keys(groupedDisplayableTools).filter(group => !group.startsWith("MCP Server:")).length > 0 ? (
                         Object.entries(groupedDisplayableTools)
-                            .filter(([groupName]) => !groupName.startsWith("MCP Server:")) // Filter out MCP groups here
+                            .filter(([groupName]) => !groupName.startsWith("MCP Server:"))
                             .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
                             .map(([groupName, toolsInGroup]) => (
                                 <Box key={groupName} sx={{ mb: 2 }}>
                                     <Typography
-                                        variant="subtitle1"
-                                        component="h4"
+                                        variant="subtitle1" component="h4"
                                         sx={{ mt: 1, mb: 0.5, pb: 0.5, borderBottom: '1px solid', borderColor: 'divider', fontWeight: 'medium' }}
                                     >
                                         {groupName}
@@ -413,29 +423,17 @@ const ToolSelector = ({
                                                         <Grid item xs={12} sm={6} key={tool.id} sx={{display: 'flex', alignItems: 'center'}}>
                                                             <FormControlLabel
                                                                 control={
-                                                                    <Checkbox
-                                                                        checked={isSelected}
-                                                                        onChange={() => handleToolToggle(tool, tool.type)}
-                                                                        name={tool.id}
-                                                                        size="small"
-                                                                        // disabled={isCodeExecutionMode} // Removed
-                                                                    />
+                                                                    <Checkbox checked={isSelected} onChange={() => handleToolToggle(tool, tool.type)} name={tool.id} size="small" />
                                                                 }
                                                                 label={
-                                                                    <Typography variant="body2" title={tool.description || tool.name}>
-                                                                        {tool.name}
-                                                                    </Typography>
+                                                                    <Typography variant="body2" title={tool.description || tool.name}>{tool.name}</Typography>
                                                                 }
                                                                 sx={{ mr: 0, flexGrow:1 }}
                                                             />
                                                             {isSelected && requiresSetup && (
                                                                 <Tooltip title={configured ? "Edit Configuration" : "Setup Tool"}>
                                                                     <span>
-                                                                        <IconButton
-                                                                            onClick={() => handleEditConfiguration(tool.id)}
-                                                                            size="small"
-                                                                            // disabled={isCodeExecutionMode} // Removed
-                                                                        >
+                                                                        <IconButton onClick={() => handleEditConfiguration(tool.id)} size="small">
                                                                             {configured ? <CheckCircleIcon color="success" fontSize="small" /> : <SettingsIcon color="warning" fontSize="small" />}
                                                                         </IconButton>
                                                                     </span>
@@ -455,38 +453,19 @@ const ToolSelector = ({
             </Accordion>
 
             <Accordion sx={{ '&.MuiAccordion-root:before': { display: 'none' }, boxShadow: 'none', borderBottom: '1px solid', borderColor: 'divider'}}>
-                <AccordionSummary
-                    expandIcon={<ExpandMoreIcon />}
-                    aria-controls="custom-tool-repo-content"
-                    id="custom-tool-repo-header"
-                >
+                <AccordionSummary expandIcon={<ExpandMoreIcon />} aria-controls="custom-tool-repo-content" id="custom-tool-repo-header" >
                     <Typography variant="h6" component="h3">Load Gofannon Tools from Custom Git Repo</Typography>
                 </AccordionSummary>
                 <AccordionDetails>
                     <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 2}}>
-                        <TextField
-                            fullWidth
-                            label="Git Repository URL (HTTPS)"
-                            variant="outlined"
-                            size="small"
-                            value={customRepoUrlInput}
-                            onChange={(e) => setCustomRepoUrlInput(e.target.value)}
-                            placeholder="e.g., https://github.com/user/repo.git or ...@commit_hash"
-                            disabled={loadingCustomRepo} // isCodeExecutionMode removed
-                        />
-                        <Button
-                            variant="contained"
-                            onClick={handleLoadCustomRepo}
-                            disabled={loadingCustomRepo || !customRepoUrlInput.trim()} // isCodeExecutionMode removed
-                            startIcon={loadingCustomRepo ? <CircularProgress size={16} /> : <AddCircleOutlineIcon />}
-                        >
+                        <TextField fullWidth label="Git Repository URL (HTTPS)" variant="outlined" size="small" value={customRepoUrlInput} onChange={(e) => setCustomRepoUrlInput(e.target.value)} placeholder="e.g., https://github.com/user/repo.git or ...@commit_hash" disabled={loadingCustomRepo}/>
+                        <Button variant="contained" onClick={handleLoadCustomRepo} disabled={loadingCustomRepo || !customRepoUrlInput.trim()} startIcon={loadingCustomRepo ? <CircularProgress size={16} /> : <AddCircleOutlineIcon />} >
                             Load Gofannon Tools
                         </Button>
                     </Box>
                     <FormHelperText>
                         Provide the HTTPS URL to a public Git repository (e.g., GitHub). You can specify a commit, branch, or tag using `@` (e.g., `repo.git@main` or `repo.git@abcdef123`). The repository must contain a `tool_manifest.json` file at its root.
                     </FormHelperText>
-
                     {loadedCustomRepos.filter(repo => repo.error).map(repo => (
                         <Alert severity="error" key={repo.url} sx={{ mt: 1 }}>
                             Failed to load tools from {repo.url}: {repo.error}
@@ -495,101 +474,57 @@ const ToolSelector = ({
                 </AccordionDetails>
             </Accordion>
 
-            {/* New MCP Tools Section */}
-            <Accordion sx={{ '&.MuiAccordion-root:before': { display: 'none' }, boxShadow: 'none', borderBottom: '1px solid', borderColor: 'divider'}}>
-                <AccordionSummary
-                    expandIcon={<ExpandMoreIcon />}
-                    aria-controls="mcp-tools-content"
-                    id="mcp-tools-header"
-                >
+            {/* --- New/Modified MCP Tools Section --- */}
+            <Accordion defaultExpanded sx={{ '&.MuiAccordion-root:before': { display: 'none' }, boxShadow: 'none', borderBottom: '1px solid', borderColor: 'divider'}}>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />} aria-controls="mcp-tools-content" id="mcp-tools-header">
                     <Typography variant="h6" component="h3">Load Tools from MCP Server</Typography>
                 </AccordionSummary>
                 <AccordionDetails>
                     <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 2}}>
-                        <TextField
-                            fullWidth
-                            label="MCP Server URL"
-                            variant="outlined"
-                            size="small"
-                            value={mcpServerUrlInput}
-                            onChange={(e) => setMcpServerUrlInput(e.target.value)}
-                            placeholder="e.g., http://localhost:8080 or https://mcp.example.com"
-                            disabled={loadingMcpServerTools}
-                        />
-                        <Button
-                            variant="contained"
-                            onClick={handleLoadMcpServerTools}
-                            disabled={loadingMcpServerTools || !mcpServerUrlInput.trim()}
-                            startIcon={loadingMcpServerTools ? <CircularProgress size={16} /> : <LanguageIcon />}
-                        >
-                            Load MCP Tools
-                        </Button>
+                        <TextField fullWidth label="MCP Server URL" variant="outlined" size="small" value={mcpServerUrlInput} onChange={(e) => setMcpServerUrlInput(e.target.value)} placeholder="e.g., http://localhost:8080 or https://mcp.example.com"/>
+                        <Button variant="contained" onClick={handleAddMcpServer} startIcon={<AddCircleOutlineIcon />}>Add Server</Button>
                     </Box>
-                    <FormHelperText>
-                        Enter the base URL of an MCP-compliant server to discover its available tools.
-                    </FormHelperText>
-                    {/* Display errors for MCP server loading attempts */}
-                    {loadedMcpServers.filter(server => server.error).map(server => (
-                        <Alert severity="error" key={server.url} sx={{ mt: 1 }}>
-                            Failed to load tools from MCP server {server.url}: {server.error}
-                        </Alert>
-                    ))}
-                    {/* Display loaded MCP tools (similar to Gofannon/Custom) */}
-                    {Object.keys(groupedDisplayableTools).filter(group => group.startsWith("MCP Server:")).length > 0 && (
-                        Object.entries(groupedDisplayableTools)
-                            .filter(([groupName]) => groupName.startsWith("MCP Server:"))
-                            .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
-                            .map(([groupName, toolsInGroup]) => (
-                                <Box key={groupName} sx={{ mb: 2, mt: 1 }}>
-                                    <Typography
-                                        variant="subtitle1"
-                                        component="h4"
-                                        sx={{ mt: 1, mb: 0.5, pb: 0.5, borderBottom: '1px solid', borderColor: 'divider', fontWeight: 'medium' }}
-                                    >
-                                        {groupName} ({toolsInGroup.filter(t => t.type ==='mcp').length} tools)
-                                    </Typography>
-                                    <FormGroup sx={{ pl: 1 }}>
-                                        <Grid container spacing={0}>
-                                            {toolsInGroup
-                                                .filter(tool => tool.type === 'mcp') // Ensure only MCP tools are listed here
-                                                .sort((a, b) => a.name.localeCompare(b.name))
-                                                .map(tool => {
-                                                    const isSelected = selectedTools.some(st => st.id === tool.id);
-                                                    // MCP tools currently don't have setup_parameters handled in this UI
-                                                    // const configured = false; // isToolConfigured(tool.id);
-                                                    // const requiresSetup = false; // tool.setup_parameters && tool.setup_parameters.length > 0;
-                                                    return (
-                                                        <Grid item xs={12} sm={6} key={tool.id} sx={{display: 'flex', alignItems: 'center'}}>
-                                                            <FormControlLabel
-                                                                control={
-                                                                    <Checkbox
-                                                                        checked={isSelected}
-                                                                        onChange={() => handleToolToggle(tool, tool.type)}
-                                                                        name={tool.id}
-                                                                        size="small"
-                                                                    />
-                                                                }
-                                                                label={
-                                                                    <Typography variant="body2" title={tool.description || tool.name}>
-                                                                        {tool.name} {/* MCP tool name from server */}
-                                                                    </Typography>
-                                                                }
-                                                                sx={{ mr: 0, flexGrow:1 }}
-                                                            />
-                                                            {/* Configuration for MCP tools not implemented via this dialog */}
-                                                        </Grid>
-                                                    );
-                                                })}
-                                        </Grid>
-                                    </FormGroup>
+                    <FormHelperText>Add an MCP-compliant server URL to discover its tools. Configure authentication for private servers.</FormHelperText>
+
+                    {loadedMcpServers.map((server, index) => (
+                        <Paper key={server.url} variant="outlined" sx={{ p: 1.5, mt: 2 }}>
+                            <Box sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1}}>
+                                <Typography sx={{wordBreak: 'break-all'}}>{server.url}</Typography>
+                                <Box>
+                                    <Tooltip title="Configure Authentication">
+                                        <IconButton onClick={() => openMcpAuthDialog(server)} size="small" color={server.auth ? "success" : "default"}>
+                                            <VpnKeyIcon />
+                                        </IconButton>
+                                    </Tooltip>
+                                    <Button size="small" variant="text" onClick={() => handleLoadMcpServerTools(server.url)} disabled={loadingMcpServerUrl === server.url} startIcon={loadingMcpServerUrl === server.url ? <CircularProgress size={16}/> : <RefreshIcon/>}>
+                                        {server.tools ? "Reload" : "Load"}
+                                    </Button>
                                 </Box>
-                            ))
-                    )}
+                            </Box>
+                            {server.error && <Alert severity="error" sx={{fontSize: '0.8rem'}}>{server.error}</Alert>}
+                            {server.tools && (
+                                <FormGroup sx={{ pl: 1, mt: 1 }}>
+                                    <Grid container spacing={0}>
+                                        {server.tools.map(tool => {
+                                            const toolId = `mcp:${server.url}:${tool.name}`;
+                                            const isSelected = selectedTools.some(st => st.id === toolId);
+                                            return (
+                                                <Grid item xs={12} sm={6} key={toolId}>
+                                                    <FormControlLabel
+                                                        control={<Checkbox checked={isSelected} onChange={() => handleToolToggle({ ...tool, id: toolId, mcpServerUrl: server.url, mcpToolName: tool.name, type: 'mcp', auth: server.auth }, 'mcp')} name={toolId} size="small"/>}
+                                                        label={<Typography variant="body2" title={tool.description || tool.name}>{tool.name}</Typography>}
+                                                    />
+                                                </Grid>
+                                            );
+                                        })}
+                                    </Grid>
+                                </FormGroup>
+                            )}
+                        </Paper>
+                    ))}
                 </AccordionDetails>
             </Accordion>
 
-
-            {/* ADK Built-in Tools Section Removed */}
 
             {selectedTools.length > 0 && (
                 <Box mt={2}>
@@ -600,7 +535,7 @@ const ToolSelector = ({
                                 {getToolDisplayName(st)} ({
                                 st.type === 'gofannon' ? `Gofannon${st.configuration ? ' (Configured)' : ''}` :
                                     st.type === 'custom_repo' ? `Custom Repo${st.configuration ? ' (Configured)' : ''}` :
-                                        st.type === 'mcp' ? 'MCP Tool' :
+                                        st.type === 'mcp' ? `MCP${st.auth ? ' (Authenticated)' : ''}` :
                                             st.type || 'Unknown'
                             })
                             </Typography>
@@ -609,20 +544,13 @@ const ToolSelector = ({
                 </Box>
             )}
 
-            {/* isCodeExecutionMode Alert Removed */}
 
             {toolForSetup && (
-                <ToolSetupDialog
-                    open={isSetupDialogOpen}
-                    onClose={() => {
-                        setIsSetupDialogOpen(false);
-                        setToolForSetup(null);
-                        setExistingConfigForSetup(null);
-                    }}
-                    tool={toolForSetup}
-                    onSave={handleSaveSetup}
-                    existingConfiguration={existingConfigForSetup}
-                />
+                <ToolSetupDialog open={isSetupDialogOpen} onClose={() => { setIsSetupDialogOpen(false); setToolForSetup(null); setExistingConfigForSetup(null);}} tool={toolForSetup} onSave={handleSaveSetup} existingConfiguration={existingConfigForSetup} />
+            )}
+
+            {isMcpAuthDialogOpen && serverForAuthSetup && (
+                <McpAuthDialog open={isMcpAuthDialogOpen} onClose={() => setIsMcpAuthDialogOpen(false)} serverUrl={serverForAuthSetup.url} existingAuth={serverForAuthSetup.auth} onSave={handleSaveMcpAuth} />
             )}
         </Paper>
     );

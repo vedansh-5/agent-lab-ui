@@ -1,5 +1,4 @@
 // src/services/agentService.js
-// src/services/agentService.js
 import { createCallable } from '../firebaseConfig';
 
 const getGofannonToolManifestCallable = createCallable('get_gofannon_tool_manifest');
@@ -30,21 +29,26 @@ export const fetchGofannonTools = async () => {
     }
 };
 
-// New function to list tools from an MCP server
-export const listMcpServerTools = async (serverUrl) => {
+// New function to list tools from an MCP server - UPDATED
+export const listMcpServerTools = async (serverUrl, auth) => {
     try {
-        const result = await listMcpServerToolsCallable({ serverUrl });
-        // Expected result.data: { success: true, tools: [{ name, description, ... }], serverUrl: string }
-        // or { success: false, message: string }
+        const result = await listMcpServerToolsCallable({ serverUrl, auth }); // Pass auth object
         if (result.data && result.data.success && Array.isArray(result.data.tools)) {
             return { success: true, tools: result.data.tools, serverUrl: result.data.serverUrl };
         }
         const errorMessage = result.data?.message || "Failed to list tools from MCP server.";
         console.error("Error listing MCP server tools:", result.data);
+        // Add more specific error for auth failure
+        if (result.data?.code === 'permission-denied') {
+            return { success: false, message: `Authentication failed for ${serverUrl}. Please check your credentials.` };
+        }
         return { success: false, message: errorMessage, serverUrl: serverUrl };
     } catch (error) {
         console.error("Error calling listMcpServerTools callable:", error);
-        const message = error.message || "An unexpected error occurred while listing MCP server tools.";
+        const message = error.details?.message || error.message || "An unexpected error occurred while listing MCP server tools.";
+        if (error.code === 'permission-denied') {
+            return { success: false, message: `Authentication failed for ${serverUrl}. Please check your credentials.` };
+        }
         return { success: false, message: message, serverUrl: serverUrl };
     }
 };

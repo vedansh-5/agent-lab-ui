@@ -20,6 +20,8 @@ async def _list_mcp_server_tools_logic_async(req: https_fn.CallableRequest):
         )
 
     server_url = req.data.get("serverUrl")
+    auth_config = req.data.get("auth") # New: Get auth config
+
     if not server_url or not isinstance(server_url, str):
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
@@ -28,17 +30,28 @@ async def _list_mcp_server_tools_logic_async(req: https_fn.CallableRequest):
 
     logger.info(f"Attempting to list tools from MCP server: {server_url}")
 
+    # --- New: Construct headers from auth_config ---
+    headers = {}
+    if auth_config and isinstance(auth_config, dict):
+        auth_type = auth_config.get("type")
+        if auth_type == "bearer" and auth_config.get("token"):
+            headers["Authorization"] = f"Bearer {auth_config['token']}"
+            logger.info(f"Using Bearer Token authentication for {server_url}.")
+        elif auth_type == "apiKey" and auth_config.get("key") and auth_config.get("name"):
+            headers[auth_config["name"]] = auth_config["key"]
+            logger.info(f"Using API Key authentication for {server_url} (Header: {auth_config['name']}).")
+
     client_context_manager = None
     transport_description = ""
+    client_kwargs = {"headers": headers} if headers else {}
+
 
     # Determine which client to use based on the URL
     if server_url.endswith("/sse"):
-        # For URLs specifically ending in /sse, use the sse_client
-        client_context_manager = sse_client(url=server_url)
+        client_context_manager = sse_client(url=server_url, **client_kwargs)
         transport_description = "SSE"
     else:
-        # Default to StreamableHTTP for other URLs (e.g., ending in /mcp or unspecified)
-        client_context_manager = streamablehttp_client(url=server_url)
+        client_context_manager = streamablehttp_client(url=server_url, **client_kwargs)
         transport_description = "StreamableHTTP"
 
     logger.info(f"Attempting to connect to MCP server at {server_url} using {transport_description} client.")
@@ -74,15 +87,17 @@ async def _list_mcp_server_tools_logic_async(req: https_fn.CallableRequest):
         logger.error(f"HTTP error {e.response.status_code} while communicating with MCP server at {server_url}: {e.response.text[:200]}")
         # Map HTTP status codes to Firebase error codes more granularly if needed
         firebase_error_code = https_fn.FunctionsErrorCode.UNAVAILABLE
-        if 400 <= e.response.status_code < 500:
+        if e.response.status_code == 401 or e.response.status_code == 403:
+            firebase_error_code = https_fn.FunctionsErrorCode.PERMISSION_DENIED
+            msg = f"Authentication failed for MCP server at {server_url}. Please check your credentials."
+        elif 400 <= e.response.status_code < 500:
             firebase_error_code = https_fn.FunctionsErrorCode.INVALID_ARGUMENT # Or FAILED_PRECONDITION, etc.
+            msg = f"MCP server at {server_url} returned client error {e.response.status_code}."
         elif 500 <= e.response.status_code < 600:
             firebase_error_code = https_fn.FunctionsErrorCode.INTERNAL
+            msg = f"MCP server at {server_url} returned server error {e.response.status_code}."
 
-        raise https_fn.HttpsError(
-            code=firebase_error_code,
-            message=f"MCP server at {server_url} returned HTTP error {e.response.status_code}."
-        )
+        raise https_fn.HttpsError(code=firebase_error_code, message=msg)
     except httpx.RequestError as e: # General httpx network errors (ConnectTimeout, ReadTimeout, etc.)
         logger.error(f"Network error while communicating with MCP server at {server_url}: {type(e).__name__} - {e}")
         if isinstance(e, httpx.ConnectTimeout):
@@ -125,4 +140,4 @@ def _list_mcp_server_tools_logic(req: https_fn.CallableRequest):
     return asyncio.run(_list_mcp_server_tools_logic_async(req))
 
 
-__all__ = ['_list_mcp_server_tools_logic', '_list_mcp_server_tools_logic_async']
+__all__ = ['_list_mcp_server_tools_logic', '_list_mcp_server_tools_logic_async']  
