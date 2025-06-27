@@ -47,9 +47,15 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
     instantiated_tools = []
     mcp_tools_by_server = {} # {'server_url_1': ['tool_name_A', 'tool_name_B'], ...}
     user_defined_tools_config = agent_config.get("tools", [])
-
+    logger.info(f"user_defined_tools_config for agent '{adk_agent_name}': {user_defined_tools_config}")
     for tc_idx, tc in enumerate(user_defined_tools_config):
         tool_type = tc.get('type')
+        if tool_type is None and tc.get('module_path') and tc.get('class_name'):
+            # If type is missing but module_path and class_name are present, assume it's a gofannon tool
+            tool_type = 'gofannon'
+            tc['type'] = 'gofannon'  # Set the type for downstream processing
+            logger.info(f"Auto-detected tool type 'gofannon' for tool with module_path: {tc.get('module_path')}")
+
         if tool_type == 'mcp':
             server_url = tc.get('mcpServerUrl') # This should be the full endpoint URL
             tool_name_on_server = tc.get('mcpToolName') # Original name on MCP server
@@ -91,11 +97,12 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
 
             # MCPToolset.from_server is an async class method.
             # It returns a tuple: (MCPToolset instance, AsyncExitStack instance)
-            async with MCPToolset(
+            toolset = MCPToolset(
                     connection_params=connection_params,
                     tool_filter=unique_tool_filter
-            ) as toolset:
-                mcp_toolset_instance = await toolset.load_tools()
+            )
+            logger.info(f"toolset: {toolset}")
+            mcp_toolset_instance = toolset
 
 
             # The ADK agent/runner is expected to manage the lifecycle of the mcp_toolset_instance,
@@ -356,7 +363,9 @@ async def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_co
             adk_agent_name,
             context_for_log=f"(type: LlmAgent, parent: {parent_adk_name_for_context}, original: {original_agent_name})"
         )
-        logger.debug(f"Final kwargs for LlmAgent '{adk_agent_name}': {agent_kwargs}")
+        tool_count = len(agent_kwargs.get("tools", []))
+        logger.info(f"Final kwargs for LlmAgent '{adk_agent_name}' includes {tool_count} tools")
+
         try:
             return Agent(**agent_kwargs)
         except Exception as e_agent_init:
