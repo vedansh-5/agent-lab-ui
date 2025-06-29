@@ -8,3 +8,10 @@ google-cloud-logging>=3.0.0
 litellm>=1.72.0
 PyPDF>=5.6.0
 PyGithub
+#mcp>=1.9.5 # required functionality coming in 1.9.5
+# Version bump on json schema- bug in MCP
+# https://github.com/modelcontextprotocol/python-sdk/blob/main/pyproject.toml#L34
+# ^^ that line needs to be >= 4.20.0 (in liteLLM its >= 4.22.0)
+# temp hack is commit hash 0b11bdb6297ce (last before bug introduced)
+git+https://github.com/modelcontextprotocol/python-sdk
+aiohttp

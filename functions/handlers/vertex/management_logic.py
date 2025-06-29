@@ -121,8 +121,9 @@ def _check_vertex_agent_deployment_status_logic(req: https_fn.CallableRequest):
         final_status_to_report, vertex_resource_name_for_client, vertex_state_for_client = "not_found_on_vertex", None, None
 
         if found_engine_proto:
-            logger.info(f"Engine '{found_engine_proto.name}' (State on Vertex: {found_engine_proto.state.name}) identified for agent '{agent_doc_id}' via {identification_method}.")
-            current_engine_vertex_state = found_engine_proto.state
+            logger.info(f"Engine '{found_engine_proto.name}' (State on Vertex: {found_engine_proto.__getstate__()}) identified for agent '{agent_doc_id}' via {identification_method}.")
+            current_engine_vertex_state = found_engine_proto.__getstate__()
+
             vertex_resource_name_for_client = found_engine_proto.name
             vertex_state_for_client = current_engine_vertex_state.name
             firestore_update_payload["vertexAiResourceName"] = found_engine_proto.name # Ensure it's set/updated

@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
     TextField, Button, Select, MenuItem, FormControl, InputLabel,
     Grid, Dialog, DialogTitle, DialogContent, DialogActions, FormHelperText,
-    Checkbox, FormControlLabel, Typography, Alert
+    Typography, Alert // Removed Checkbox, FormControlLabel
 } from '@mui/material';
 import { v4 as uuidv4 } from 'uuid';
 import ToolSelector from '../tools/ToolSelector';
@@ -35,7 +35,7 @@ function validateAgentName(name) {
     if (name.length > 63) {
         return "Agent Name is too long (max 63 characters).";
     }
-    return null; // No error
+    return null;
 }
 
 
@@ -43,7 +43,7 @@ const ChildAgentFormDialog = ({
                                   open,
                                   onClose,
                                   onSave,
-                                  childAgentData, // This is initialData for the child
+                                  childAgentData,
                                   availableGofannonTools,
                                   loadingGofannon,
                                   gofannonError,
@@ -53,43 +53,37 @@ const ChildAgentFormDialog = ({
     const [description, setDescription] = useState('');
     const [currentChildAgentType, setCurrentChildAgentType] = useState(AGENT_TYPES[0]);
 
-    // Model Selection State for Child
     const [selectedProviderId, setSelectedProviderId] = useState(DEFAULT_LITELLM_PROVIDER_ID);
     const [selectedBaseModelId, setSelectedBaseModelId] = useState(DEFAULT_LITELLM_BASE_MODEL_ID);
-
-    // This is what the user types for "custom" provider, or derived for others.
     const [inputtedModelString, setInputtedModelString] = useState(DEFAULT_LITELLM_BASE_MODEL_ID);
-
     const [litellmApiBase, setLitellmApiBase] = useState('');
     const [litellmApiKey, setLitellmApiKey] = useState('');
 
-
     const [instruction, setInstruction] = useState('');
     const [selectedTools, setSelectedTools] = useState([]);
-    const [enableCodeExecution, setEnableCodeExecution] = useState(false);
+    // enableCodeExecution removed
     const [outputKey, setOutputKey] = useState('');
     const [formError, setFormError] = useState('');
     const [nameError, setNameError] = useState('');
     const [usedCustomRepoUrls, setUsedCustomRepoUrls] = useState([]);
+    const [usedMcpServerUrls, setUsedMcpServerUrls] = useState([]); // New state
 
     const currentProviderConfig = getLiteLLMProviderConfig(selectedProviderId);
     const availableBaseModels = currentProviderConfig?.models || [];
     const initialDataProcessedRef = useRef(false);
 
 
-    // Effect for initializing form state from childAgentData
     useEffect(() => {
-        if (open) { // Only run when dialog opens
+        if (open) {
             initialDataProcessedRef.current = false;
             const dataToLoad = childAgentData || {};
 
             setName(dataToLoad.name || '');
             setDescription(dataToLoad.description || '');
-            setCurrentChildAgentType(dataToLoad.agentType || AGENT_TYPES[0]); // Default to 'Agent'
+            setCurrentChildAgentType(dataToLoad.agentType || AGENT_TYPES[0]);
 
             let initialSelectedProvider = dataToLoad.selectedProviderId || DEFAULT_LITELLM_PROVIDER_ID;
             let initialBaseModelName = dataToLoad.litellm_model_string || DEFAULT_LITELLM_BASE_MODEL_ID;
-
 
             if (!dataToLoad.selectedProviderId && dataToLoad.litellm_model_string) {
                 const fullModelStr = dataToLoad.litellm_model_string;
@@ -109,15 +103,13 @@ const ChildAgentFormDialog = ({
                         initialBaseModelName = fullModelStr;
                     }
                 }
-
             }
-
             setSelectedProviderId(initialSelectedProvider);
 
             const providerConf = getLiteLLMProviderConfig(initialSelectedProvider);
             if (providerConf?.id === 'custom' || providerConf?.id === 'openai_compatible') {
                 setSelectedBaseModelId('');
-                setInputtedModelString(initialBaseModelName); // This is the full string
+                setInputtedModelString(initialBaseModelName);
             } else if (providerConf?.models.some(m => m.id === initialBaseModelName)) {
                 setSelectedBaseModelId(initialBaseModelName);
                 setInputtedModelString(initialBaseModelName);
@@ -130,15 +122,16 @@ const ChildAgentFormDialog = ({
             setLitellmApiBase(dataToLoad.litellm_api_base || '');
             setLitellmApiKey(dataToLoad.litellm_api_key || '');
             setInstruction(dataToLoad.instruction || '');
-            const initialEnableCodeExec = dataToLoad.enableCodeExecution || false;
-            setEnableCodeExecution(initialEnableCodeExec);
-            setSelectedTools(initialEnableCodeExec ? [] : (dataToLoad.tools || []));
+            // enableCodeExecution removed
+            setSelectedTools(dataToLoad.tools || []);
             setOutputKey(dataToLoad.outputKey || '');
             setUsedCustomRepoUrls(
-                initialEnableCodeExec ? [] : (
-                    dataToLoad.usedCustomRepoUrls ||
-                    (dataToLoad.tools?.filter(t => t.type === 'custom_repo' && t.sourceRepoUrl).map(t => t.sourceRepoUrl) || [])
-                )
+                dataToLoad.usedCustomRepoUrls ||
+                (dataToLoad.tools?.filter(t => t.type === 'custom_repo' && t.sourceRepoUrl).map(t => t.sourceRepoUrl) || [])
+            );
+            setUsedMcpServerUrls( // Init MCP Urls for child
+                dataToLoad.usedMcpServerUrls ||
+                (dataToLoad.tools?.filter(t => t.type === 'mcp' && t.mcpServerUrl).map(t => t.mcpServerUrl) || [])
             );
 
             setFormError('');
@@ -147,7 +140,6 @@ const ChildAgentFormDialog = ({
         }
     }, [childAgentData, open]);
 
-    // Effect for handling selectedProviderId change
     useEffect(() => {
         if (!open || !initialDataProcessedRef.current) return;
 
@@ -155,8 +147,6 @@ const ChildAgentFormDialog = ({
         if (providerConf) {
             if (providerConf.id === 'custom' || providerConf.id === 'openai_compatible') {
                 setSelectedBaseModelId('');
-                // Preserve inputtedModelString if switching TO custom/oai_compat FROM another custom/oai_compat OR if childAgentData was custom/oai_compat
-                // Otherwise, clear it.
                 if (childAgentData?.selectedProviderId !== 'custom' && childAgentData?.selectedProviderId !== 'openai_compatible' &&
                     (currentProviderConfig?.id !== 'custom' && currentProviderConfig?.id !== 'openai_compatible')) {
                     setInputtedModelString('');
@@ -165,10 +155,8 @@ const ChildAgentFormDialog = ({
                 }
             } else if (providerConf.models && providerConf.models.length > 0) {
                 const firstModelId = providerConf.models[0].id;
-                // If current selectedBaseModelId is not valid for new provider, default to first model
                 const currentBaseIsValid = providerConf.models.some(m => m.id === selectedBaseModelId);
                 const newBaseModel = currentBaseIsValid ? selectedBaseModelId : firstModelId;
-
                 setSelectedBaseModelId(newBaseModel);
                 setInputtedModelString(newBaseModel);
             } else {
@@ -178,41 +166,36 @@ const ChildAgentFormDialog = ({
             setLitellmApiBase(providerConf.allowsCustomBase ? (litellmApiBase || '') : (providerConf.apiBase || ''));
             setLitellmApiKey('');
         }
-    }, [selectedProviderId, open, childAgentData, litellmApiBase, selectedBaseModelId, currentProviderConfig]); // Depends on childAgentData to correctly preserve custom strings
+    }, [selectedProviderId, open, childAgentData, litellmApiBase, selectedBaseModelId, currentProviderConfig]);
 
-    // Effect for handling selectedBaseModelId change (for non-custom providers)
     useEffect(() => {
         if (!open || !initialDataProcessedRef.current) return;
-
         if (selectedProviderId !== 'custom' && selectedProviderId !== 'openai_compatible' && selectedBaseModelId) {
             setInputtedModelString(selectedBaseModelId);
         }
     }, [selectedBaseModelId, selectedProviderId, open]);
 
-
-
     const handleUsedCustomRepoUrlsChange = (urls) => {
         setUsedCustomRepoUrls(urls);
     };
-
-    const handleCodeExecutionChange = (event) => {
-        const isChecked = event.target.checked;
-        setEnableCodeExecution(isChecked);
-        if (isChecked) {
-            setSelectedTools([]);
-            setUsedCustomRepoUrls([]);
-        }
+    const handleUsedMcpServerUrlsChange = (urls) => { // New handler
+        setUsedMcpServerUrls(urls);
     };
+
+    // handleCodeExecutionChange removed
 
     const handleSelectedToolsChange = (newTools) => {
         setSelectedTools(newTools);
-        if (newTools.length > 0 && enableCodeExecution) {
-            setEnableCodeExecution(false);
-        }
+        // enableCodeExecution logic removed
         const currentCustomRepoUrls = newTools
             .filter(st => st.type === 'custom_repo' && st.sourceRepoUrl)
             .map(st => st.sourceRepoUrl);
         setUsedCustomRepoUrls(Array.from(new Set(currentCustomRepoUrls)));
+
+        const currentMcpServerUrls = newTools // Update MCP URLs
+            .filter(st => st.type === 'mcp' && st.mcpServerUrl)
+            .map(st => st.mcpServerUrl);
+        setUsedMcpServerUrls(Array.from(new Set(currentMcpServerUrls)));
     };
 
 
@@ -233,7 +216,7 @@ const ChildAgentFormDialog = ({
             return;
         }
 
-        if (showLlmFields && !instruction.trim()) { // Only require instruction if LLM fields are shown
+        if (showLlmFields && !instruction.trim()) {
             setFormError('Child agent/step instruction is required.');
             return;
         }
@@ -244,7 +227,6 @@ const ChildAgentFormDialog = ({
         } else {
             finalModelStringForSubmit = selectedBaseModelId;
         }
-
 
         if (showLlmFields && !finalModelStringForSubmit) {
             setFormError('Model String is required for child agent/step.');
@@ -257,19 +239,18 @@ const ChildAgentFormDialog = ({
             description,
             agentType: currentChildAgentType,
             instruction: showLlmFields ? instruction : null,
-            tools: (showLlmFields && !enableCodeExecution) ? selectedTools : [],
-            enableCodeExecution: showLlmFields ? enableCodeExecution : false,
-            usedCustomRepoUrls: (showLlmFields && !enableCodeExecution) ? usedCustomRepoUrls : [],
+            tools: showLlmFields ? selectedTools : [], // enableCodeExecution removed
+            // enableCodeExecution removed
+            usedCustomRepoUrls: showLlmFields ? usedCustomRepoUrls : [],
+            usedMcpServerUrls: showLlmFields ? usedMcpServerUrls : [], // Add MCP URLs
 
             selectedProviderId: showLlmFields ? selectedProviderId : null,
-            litellm_model_string: showLlmFields ? finalModelStringForSubmit : null, // Base for standard, full for custom/oai_compat
-
+            litellm_model_string: showLlmFields ? finalModelStringForSubmit : null,
             litellm_api_base: (showLlmFields && currentProviderConfig?.allowsCustomBase && litellmApiBase.trim())
                 ? litellmApiBase.trim()
                 : (currentProviderConfig?.id === 'custom' || currentProviderConfig?.id === 'openai_compatible' || currentProviderConfig?.id === 'azure'
-                    ? (litellmApiBase.trim() || null) // For custom/azure, user value or null if empty
-                    : (currentProviderConfig?.apiBase || null)), // Provider default or null
-
+                    ? (litellmApiBase.trim() || null)
+                    : (currentProviderConfig?.apiBase || null)),
             litellm_api_key: (showLlmFields && currentProviderConfig?.allowsCustomKey && litellmApiKey.trim())
                 ? litellmApiKey.trim()
                 : null,
@@ -284,23 +265,24 @@ const ChildAgentFormDialog = ({
             childDataToSave.maxLoops = childAgentData?.maxLoops || 3;
         }
 
-
-        // Transform tools for ADK
         const adkReadyTools = (childDataToSave.tools || []).map(tool => {
             if (tool.type === 'gofannon' || tool.type === 'custom_repo') {
                 const { sourceRepoUrl, type, ...adkToolProps } = tool;
                 return adkToolProps;
             }
+            if (tool.type === 'mcp') {
+                return tool;
+            }
+            // ADK built-in tools removed
             return tool;
         });
         childDataToSave.tools = adkReadyTools;
-
 
         onSave(childDataToSave);
         onClose();
     };
 
-    const codeExecutionDisabledByToolSelection = selectedTools.length > 0;
+    // const codeExecutionDisabledByToolSelection = selectedTools.length > 0; // No longer needed
     const showLlmFields = currentChildAgentType === 'Agent' || currentChildAgentType === 'LoopAgent';
 
 
@@ -367,7 +349,7 @@ const ChildAgentFormDialog = ({
                                         <InputLabel id="child-baseModel-label">Base Model</InputLabel>
                                         <Select
                                             labelId="child-baseModel-label"
-                                            value={selectedBaseModelId} // This is the base model name
+                                            value={selectedBaseModelId}
                                             onChange={(e) => setSelectedBaseModelId(e.target.value)}
                                             label="Base Model"
                                         >
@@ -381,7 +363,7 @@ const ChildAgentFormDialog = ({
                                     <TextField
                                         label="Model String"
                                         id="child-inputtedModelString"
-                                        value={inputtedModelString} // For custom, this is the full string
+                                        value={inputtedModelString}
                                         onChange={(e) => setInputtedModelString(e.target.value)}
                                         fullWidth variant="outlined" required
                                         helperText={
@@ -449,17 +431,7 @@ const ChildAgentFormDialog = ({
                                     error={formError.includes('instruction')}
                                 />
                             </Grid>
-                            <Grid item xs={12}>
-                                <FormControlLabel
-                                    control={
-                                        <Checkbox checked={enableCodeExecution} onChange={handleCodeExecutionChange} name="enableChildCodeExecution" disabled={codeExecutionDisabledByToolSelection} />
-                                    }
-                                    label="Enable Built-in Code Execution"
-                                />
-                                <FormHelperText sx={{ml:3.5, mt:-0.5}}>
-                                    (Requires a compatible model. Cannot be used if other tools are selected.)
-                                </FormHelperText>
-                            </Grid>
+                            {/* Code Execution Checkbox Removed */}
                             <Grid item xs={12}>
                                 <ToolSelector
                                     availableGofannonTools={availableGofannonTools}
@@ -468,8 +440,9 @@ const ChildAgentFormDialog = ({
                                     onRefreshGofannon={onRefreshGofannon}
                                     loadingGofannon={loadingGofannon}
                                     gofannonError={gofannonError}
-                                    isCodeExecutionMode={enableCodeExecution}
+                                    // isCodeExecutionMode removed
                                     onUsedCustomRepoUrlsChange={handleUsedCustomRepoUrlsChange}
+                                    onUsedMcpServerUrlsChange={handleUsedMcpServerUrlsChange} // New prop
                                 />
                             </Grid>
                         </>
