@@ -341,6 +341,17 @@ AgentLabUI allows you to deploy agents to Google Cloud's Vertex AI using the Age
     (If you prefer Yarn: `yarn start`)
 3.  This will open the application in your web browser, usually at `http://localhost:3000`.
 
+**Note:** If you encounter Firestore index errors when using the application:
+1. Open the browser's Developer Tools (F12) and check the Console tab
+2. You'll see error messages with links to create missing Firestore indexes
+3. Click on these links to automatically create the required indexes in your Firebase console
+4. Wait for the indexes to build (this may take a few minutes)
+5. Reload the React application
+6. Repeat this process 2-3 times as you may encounter additional index creation links
+7. The required indexes are also defined in the `firestore.indexes.json` file in your project root
+
+This is normal for the first run as Firestore creates indexes on-demand based on your queries.
+
 ### Deploy Firebase Components
 
 To make your application and backend functions accessible online, you need to deploy them to Firebase.
@@ -372,9 +383,14 @@ This project includes GitHub Actions workflows to automate building and deployin
 
 ### Overview
 
-Two workflows are defined in the `.github/workflows/` directory:
-*   `firebase-hosting-merge.yml`: Deploys to a `live` Firebase Hosting channel on pushes to the `main` branch.
-*   `firebase-hosting-pull-request.yml`: Deploys to a temporary preview Firebase Hosting channel for pull requests made within the main repository.
+The project includes several GitHub Actions workflows in the `.github/workflows/` directory to automate various tasks:
+
+*   **`firebase-hosting-merge.yml`**: Deploys to a `live` Firebase Hosting channel on pushes to the `main` branch.
+*   **`firebase-hosting-pull-request.yml`**: Deploys to a temporary preview Firebase Hosting channel for pull requests made within the main repository.
+*   **`deploy-my-fork.yml`**: A manual deployment workflow for forked repositories to deploy to their own Firebase projects.
+*   **`upstream-pr-checks.yml`**: Runs linting and testing checks on pull requests (currently disabled).
+*   **`create-release.yml`**: Creates tagged releases with automated version management.
+*   **`sync-upstream.yml`**: Synchronizes forked repositories with upstream changes (referenced in [syncing documentation](docs/syncing.md)).
 
 These workflows are conditional and rely on GitHub Secrets being configured in your repository.
 
@@ -442,6 +458,15 @@ To enable these workflows, you (or the repository owner) need to configure the f
         3.  Extracts `projectId` from `secrets.FIREBASE_CONFIG_JSON`.
         4.  Installs dependencies and builds the React app.
         5.  Deploys the `build/` directory to a unique preview channel on Firebase Hosting (e.g., `pr-<pr-number>-<sha>`), using the extracted `projectId`. The Firebase action automatically generates a comment on the PR with a link to the preview site.
+
+*   **`deploy-my-fork.yml`**: This workflow is designed for use in forked repositories. It allows manual deployment to the fork's Firebase project.
+    *   **Trigger:** Manually triggered from the Actions tab in GitHub.
+    *   **Required Secrets:** Same as above (`FIREBASE_CONFIG_JSON` and `FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI`).
+    *   **Actions:** Checks out the code, sets up Firebase config, installs dependencies, builds the app, and deploys to Firebase Hosting.
+
+*   **`upstream-pr-checks.yml`**: This workflow is intended to run checks on pull requests made to the upstream repository. It is currently disabled.
+*   **`create-release.yml`**: This workflow automates the creation of tagged releases for the project. It manages versioning and publishes releases.
+*   **`sync-upstream.yml`**: This workflow helps keep forked repositories in sync with the upstream repository. It can be referenced in the [syncing documentation](docs/syncing.md).
 
 ### Notes for Contributors and Forked Repositories
 
@@ -640,4 +665,4 @@ The Firestore security rules (`firestore.rules`) have been updated to support th
 
 ---    
 
-That's it! You should now have AgentLabUI up and running. Happy agent building!  
+That's it! You should now have AgentLabUI up and running. Happy agent building!
