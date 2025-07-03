@@ -165,7 +165,8 @@ const AgentRunner = ({
                 setConversation([]); // Clear if it contains historical context markers
             }
         }
-    }, [historicalRunData, isHistoricalView]); // MODIFIED: Removed 'conversation' from dependencies
+        //eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [historicalRunData, isHistoricalView]); 
 
 
     const handleOpenReasoningLog = (events) => {
