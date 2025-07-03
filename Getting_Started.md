@@ -424,6 +424,15 @@ To enable these workflows, you (or the repository owner) need to configure the f
             Ensure this service account has the "Firebase Hosting Admin" role in your Google Cloud project's IAM settings.
     *   **When to set:** If you want the GitHub Actions to automatically deploy your application to Firebase Hosting. If this secret is not set (even if `FIREBASE_CONFIG_JSON` is), the build may complete, but the deployment step will be skipped.
 
+3.  **Additional Secrets for Functions Deployment** (Optional)
+    *   These secrets are used by the `deploy-functions.yml` workflow and may be required by your Firebase Functions:
+    *   **`OPENAI_API_KEY`**: OpenAI API key for AI/ML functionality
+    *   **`DEEPINFRA_API_KEY`**: DeepInfra API key for additional AI services
+    *   **`GITHUB_TOKEN`**: GitHub personal access token for repository operations
+    *   **Purpose:** These environment variables are passed to your Firebase Functions during deployment and can be accessed by your function code.
+    *   **When to set:** Only if your Firebase Functions require these specific API keys or tokens. The `deploy-functions.yml` workflow will include any of these secrets that are defined in your repository.
+    *   **Content:** The actual API keys or tokens as provided by the respective services.    
+
 ### How to Set GitHub Secrets
 
 1.  Navigate to your GitHub repository.
