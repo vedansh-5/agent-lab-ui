@@ -373,6 +373,12 @@ To make your application and backend functions accessible online, you need to de
     *   Deploy only hosting: `firebase deploy --only hosting`
     *   Deploy only Firestore rules: `firebase deploy --only firestore:rules` (Make sure `firestore.rules` exists and is correctly configured).
 
+    **Alternative - Deploy via GitHub Actions:**
+    You can also deploy Firebase components manually using the provided GitHub Actions workflows:
+    *   **Deploy Functions:** Go to the "Actions" tab in your GitHub repository and run the `Deploy Firebase Functions Manually` workflow
+    *   **Deploy Hosting:** Use the `Deploy to My Fork` workflow to deploy the frontend to Firebase Hosting
+    *   **Requirements:** Ensure you have the required GitHub secrets configured (`FIREBASE_CONFIG_JSON`, `FIREBASE_SERVICE_ACCOUNT_AGENT_WEB_UI`, and any additional API keys for functions)
+
     After deployment, the Firebase CLI will output the URL for your hosted web application.
 
 ---  
