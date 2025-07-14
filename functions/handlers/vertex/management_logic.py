@@ -103,8 +103,9 @@ def _check_vertex_agent_deployment_status_logic(req: https_fn.CallableRequest):
 
         if not found_engine_proto: # If not found by stored name or stored name was invalid/cleared
             logger.info(f"Attempting to find engine for agent '{agent_doc_id}' by listing with display_name filter: 'display_name=\"{expected_vertex_display_name}\"'.")
-            list_request = ReasoningEngineServiceClient.list_reasoning_engines_request_type(parent=parent_path, filter=f'display_name="{expected_vertex_display_name}"')
-            engine_list_results = list(reasoning_engine_client.list_reasoning_engines(request=list_request))
+            # list_request = ReasoningEngineServiceClient.list_reasoning_engines_request_type(parent=parent_path, filter=f'display_name="{expected_vertex_display_name}"')
+            # engine_list_results = list(reasoning_engine_client.list_reasoning_engines(request=list_request))
+            engine_list_results = list(reasoning_engine_client.list_reasoning_engines(parent=parent_path, filter=f'display_name="{expected_vertex_display_name}"'))
 
             if engine_list_results:
                 if len(engine_list_results) > 1: logger.warn(f"Multiple ({len(engine_list_results)}) engines found for display_name '{expected_vertex_display_name}'. Using the first one: {[e.name for e in engine_list_results]}.")
