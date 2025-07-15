@@ -94,3 +94,4 @@ v1.0.0-rc1
 - Rotate PATs periodically (every 90 days recommended)
 - Never hardcode tokens in workflow files
 - Review upstream changes before merging into main branch  
+
