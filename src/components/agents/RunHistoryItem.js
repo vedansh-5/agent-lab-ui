@@ -12,39 +12,38 @@ const RunHistoryItem = ({ run, index, onSelectRun }) => {
     const [artifactSummary, setArtifactSummary] = useState('');
 
     useEffect(() => {
-        if (run.outputEventsRaw) {
-            try {
-                const events = JSON.parse(run.outputEventsRaw);
-                const updates = {};
-                if (Array.isArray(events)) {
-                    events.forEach(event => {
-                        if (event && event.actions && event.actions.artifact_delta) {
-                            for (const [filename, versionInfo] of Object.entries(event.actions.artifact_delta)) {
-                                let versionDisplay = versionInfo;
-                                if (typeof versionInfo === 'object' && versionInfo !== null && 'version' in versionInfo) {
-                                    versionDisplay = versionInfo.version;
-                                } else if (typeof versionInfo === 'object' && versionInfo !== null) {
-                                    versionDisplay = JSON.stringify(versionInfo);
-                                }
-                                updates[filename] = versionDisplay;
+        // Now read from the clean `outputEvents` array
+        const events = run.outputEvents || [];
+        try {
+            const updates = {};
+            if (Array.isArray(events)) {
+                events.forEach(event => {
+                    if (event && event.actions && event.actions.artifact_delta) {
+                        for (const [filename, versionInfo] of Object.entries(event.actions.artifact_delta)) {
+                            let versionDisplay = versionInfo;
+                            if (typeof versionInfo === 'object' && versionInfo !== null && 'version' in versionInfo) {
+                                versionDisplay = versionInfo.version;
+                            } else if (typeof versionInfo === 'object' && versionInfo !== null) {
+                                versionDisplay = JSON.stringify(versionInfo);
                             }
+                            updates[filename] = versionDisplay;
                         }
-                    });
-                }
-                if (Object.keys(updates).length > 0) {
-                    const summaryString = Object.entries(updates)
-                        .map(([file, ver]) => `${file} (v${ver})`)
-                        .join(', ');
-                    setArtifactSummary(summaryString);
-                } else {
-                    setArtifactSummary('');
-                }
-            } catch (e) {
-                console.error("Error parsing events for artifact summary:", e);
+                    }
+                });
+            }
+            if (Object.keys(updates).length > 0) {
+                const summaryString = Object.entries(updates)
+                    .map(([file, ver]) => `${file} (v${ver})`)
+                    .join(', ');
+                setArtifactSummary(summaryString);
+            } else {
                 setArtifactSummary('');
             }
+        } catch (e) {
+            console.error("Error processing events for artifact summary:", e);
+            setArtifactSummary('');
         }
-    }, [run.outputEventsRaw]);
+    }, [run.outputEvents]);
 
     const handleViewButtonClick = (event) => {
         event.stopPropagation(); // Prevent Accordion toggle when the button is clicked
@@ -149,11 +148,11 @@ const RunHistoryItem = ({ run, index, onSelectRun }) => {
                     </Box>
                 )}
 
-                {run.outputEventsRaw && (
+                {run.outputEvents && run.outputEvents.length > 0 && (
                     <Box>
-                        <Typography variant="overline" color="text.secondary" display="block">Raw Events ({JSON.parse(run.outputEventsRaw)?.length || 0}):</Typography>
+                        <Typography variant="overline" color="text.secondary" display="block">Raw Events ({run.outputEvents.length}):</Typography>
                         <Paper variant="outlined" component="pre" sx={{ p: 1, mt: 0.5, whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: '0.75rem', bgcolor: 'background.default' }}>
-                            {JSON.stringify(JSON.parse(run.outputEventsRaw), null, 2)}
+                            {JSON.stringify(run.outputEvents, null, 2)}
                         </Paper>
                     </Box>
                 )}

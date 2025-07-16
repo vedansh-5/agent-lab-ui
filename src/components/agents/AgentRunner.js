@@ -103,28 +103,11 @@ const AgentRunner = ({
                 timestamp: historicalRunData.timestamp?.toDate ? historicalRunData.timestamp.toDate() : new Date(),
             });
 
-            let agentEvents = [];
-            let artifactUpdatesForHistorical = null;
-            let stuffedContextFromHistory = null;
+            // Use the 'outputEvents' array directly from Firestore data
+            const agentEvents = historicalRunData.outputEvents || [];
+            const artifactUpdatesForHistorical = extractArtifactUpdates(agentEvents);
+            let stuffedContextFromHistory = historicalRunData.stuffedContextItems || null;
 
-            try {
-                agentEvents = historicalRunData.outputEventsRaw ? JSON.parse(historicalRunData.outputEventsRaw) : [];
-                artifactUpdatesForHistorical = extractArtifactUpdates(agentEvents);
-
-                if (historicalRunData.stuffedContextItems) {
-                    stuffedContextFromHistory = typeof historicalRunData.stuffedContextItems === 'string'
-                        ? JSON.parse(historicalRunData.stuffedContextItems)
-                        : historicalRunData.stuffedContextItems;
-                }
-            } catch (parseError) {
-                console.error("Error parsing historical run events/context:", parseError);
-                agentEvents = [{ type: "error", content: "Error parsing raw events." }];
-            }
-
-            // If historical context exists, insert it BEFORE the user message that consumed it
-            // This assumes the inputMessage in Firestore is the user's query *after* context was stuffed
-            // If context was meant to be prepended, the logic in handleSendMessage would have done that
-            // before saving. For display, we can show it before the user's explicit part.
             if (stuffedContextFromHistory && stuffedContextFromHistory.length > 0) {
                 const userMessageIndex = historicalConversation.findIndex(msg => msg.type === 'user');
                 const contextMessageTime = historicalRunData.timestamp?.toDate
@@ -148,7 +131,7 @@ const AgentRunner = ({
             historicalConversation.push({
                 type: 'agent',
                 text: historicalRunData.finalResponseText || "Agent did not provide a text response.",
-                events: agentEvents,
+                events: agentEvents, // Now this is a clean array of objects
                 timestamp: historicalRunData.timestamp?.toDate ? new Date(historicalRunData.timestamp.toDate().getTime() + 1000) : new Date(), // Slightly after user message
                 queryErrorDetails: historicalRunData.queryErrorDetails || null,
                 artifactUpdates: artifactUpdatesForHistorical
@@ -166,7 +149,7 @@ const AgentRunner = ({
             }
         }
         //eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [historicalRunData, isHistoricalView]); 
+    }, [historicalRunData, isHistoricalView]);
 
 
     const handleOpenReasoningLog = (events) => {

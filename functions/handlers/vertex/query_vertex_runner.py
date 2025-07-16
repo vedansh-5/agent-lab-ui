@@ -28,32 +28,66 @@ def _run_vertex_stream_query_sync(
     logger.info(f"[VertexRunner/Sync] Starting stream_query for Session: {current_adk_session_id}, User: {adk_user_id}, Msg: '{message_text[:70]}...'")
 
     try:
-        # The stream_query is an iterable
-        for event_idx, event_data in enumerate(remote_app.stream_query(
+        # The stream_query is an iterable that yields Pydantic Event models
+        for event_idx, event_obj in enumerate(remote_app.stream_query(
                 message=message_text,
                 user_id=adk_user_id,
                 session_id=current_adk_session_id
         )):
             event_count = event_idx + 1
-            logger.debug(f"[VertexRunner/Sync] Received event {event_count} for session {current_adk_session_id}: {str(event_data)[:200]}...") # Log truncated event
-            all_events_from_stream.append(event_data) # Store the raw event data
 
-            # Accumulate text from 'text_delta' type events
-            if isinstance(event_data, dict): # ADK events are typically dicts when streamed
-                if event_data.get('type') == 'text_delta' and \
-                        event_data.get('content', {}).get('parts'):
-                    for part in event_data['content']['parts']:
+            # Convert the Pydantic Event model to a dictionary for consistent processing
+            event_data_dict = {}
+            if hasattr(event_obj, 'model_dump') and callable(event_obj.model_dump):
+                event_data_dict = event_obj.model_dump()
+            elif isinstance(event_obj, dict): # Fallback if it's already a dict
+                logger.warn(f"[VertexRunner/Sync] Received a dict instead of a Pydantic model for event {event_count}.")
+                event_data_dict = event_obj
+            else:
+                logger.error(f"[VertexRunner/Sync] Unexpected event type for event {event_count}: {type(event_obj)}. Skipping.")
+                all_events_from_stream.append({"type": "unknown_event_format", "raw": str(event_obj)})
+                continue
+
+                # Infer the event type if it's not explicitly set
+            event_type = event_data_dict.get("type")
+            if not event_type or event_type == "unspecified":
+                inferred_type = "unknown_part" # Default fallback
+                try:
+                    # Heuristic: Infer type from the first key in the first content part
+                    content = event_data_dict.get("content")
+                    if content and isinstance(content, dict):
+                        parts = content.get("parts")
+                        if parts and isinstance(parts, list) and len(parts) > 0:
+                            first_part = parts[0]
+                            if first_part and isinstance(first_part, dict):
+                                part_keys = list(first_part.keys())
+                                if part_keys:
+                                    inferred_type = part_keys[0] # e.g., 'text', 'tool_code'
+                except Exception as e_infer:
+                    logger.warn(f"[VertexRunner/Sync] Could not infer event type for event {event_count}: {e_infer}")
+                event_data_dict["type"] = inferred_type
+                logger.debug(f"[VertexRunner/Sync] Inferred event type for event {event_count} as '{inferred_type}'")
+
+
+            logger.debug(f"[VertexRunner/Sync] Processed event {event_count} (type: {event_data_dict.get('type')}) for session {current_adk_session_id}: {str(event_data_dict)[:200]}...")
+            all_events_from_stream.append(event_data_dict) # Store the DICTIONARY version
+
+            # Accumulate text by looking for a 'text' key in any content part.
+            # This is more robust than checking for a specific event type like 'text_delta'.
+            content = event_data_dict.get("content")
+            if content and isinstance(content, dict):
+                parts = content.get("parts")
+                if parts and isinstance(parts, list):
+                    for part in parts:
                         if 'text' in part and isinstance(part['text'], str):
                             accumulated_text_response += part['text']
-                            # Check for error messages within the event stream itself
-                if event_data.get('error_message'):
-                    error_msg = f"Error in event stream from Vertex (event {event_count}): {event_data['error_message']}"
-                    logger.warn(f"[VertexRunner/Sync] {error_msg} for session {current_adk_session_id}")
-                    query_errors_from_stream.append(error_msg)
-                    stream_had_exceptions = True # Mark that an error occurred within the stream
-            else: # Should not happen with ADK events
-                logger.warn(f"[VertexRunner/Sync] Received non-dict event {event_count} for session {current_adk_session_id}: {type(event_data)}")
 
+                            # Check for error messages within the event stream itself
+            if event_data_dict.get('error_message'):
+                error_msg = f"Error in event stream from Vertex (event {event_count}): {event_data_dict['error_message']}"
+                logger.warn(f"[VertexRunner/Sync] {error_msg} for session {current_adk_session_id}")
+                query_errors_from_stream.append(error_msg)
+                stream_had_exceptions = True
 
     except Exception as e_stream_query:
         error_msg = f"Exception during remote_app.stream_query for session {current_adk_session_id}: {type(e_stream_query).__name__} - {str(e_stream_query)}"

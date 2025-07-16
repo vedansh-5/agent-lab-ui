@@ -174,35 +174,7 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
         logger.error(f"[QueryWrapper] Internal error: _orchestrate_vertex_query did not return a dictionary. Got: {type(result_data)}")
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message="Internal server error processing agent query.")
 
-        # Prepare event data for two destinations:
-    # 1. client_events: A list of dictionaries for the client JSON response.
-    # 2. firestore_events_json_list: A list of JSON strings for Firestore storage.
-    client_events = []
-    firestore_events_json_list = []
     raw_events_from_orchestrator = result_data.get("events", [])
-
-    if raw_events_from_orchestrator:
-        for event_obj_or_dict in raw_events_from_orchestrator:
-            event_as_dict = {}
-            # Convert event to a dictionary if it's an object (e.g., Pydantic model)
-            if hasattr(event_obj_or_dict, 'model_dump') and callable(event_obj_or_dict.model_dump):
-                event_as_dict = event_obj_or_dict.model_dump()
-            elif isinstance(event_obj_or_dict, dict):
-                event_as_dict = event_obj_or_dict
-            else:
-                # Fallback for unexpected types
-                logger.warn(f"[QueryWrapper] Non-standard event type encountered: {type(event_obj_or_dict)}. Storing as string representation.")
-                event_as_dict = {"_raw_event_data": str(event_obj_or_dict)}
-
-            client_events.append(event_as_dict) # Append the dictionary to the client list
-
-            # Serialize the dictionary to a JSON string for Firestore
-            try:
-                firestore_events_json_list.append(json.dumps(event_as_dict))
-            except TypeError as e_json:
-                error_str = f"Failed to JSON serialize event dict: {e_json}"
-                logger.warn(f"[QueryWrapper] {error_str}. Storing raw string representation in Firestore: {str(event_as_dict)[:200]}")
-                firestore_events_json_list.append(str(event_as_dict))
 
     run_data_to_store_in_firestore = {
         "firebaseUserId": firebase_auth_uid,
@@ -210,7 +182,7 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
         "adkSessionId": result_data.get("adkSessionId"),
         "vertexAiResourceName": resource_name,
         "inputMessage": message_text,
-        "outputEventsRawJsonList": firestore_events_json_list, # Store list of JSON strings
+        "outputEvents": raw_events_from_orchestrator, # Store the array of event dicts directly
         "finalResponseText": result_data.get("responseText", ""),
         "queryErrorDetails": result_data.get("queryErrorDetails"),
         "timestamp": firestore.SERVER_TIMESTAMP
@@ -224,7 +196,7 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
 
     client_response_payload = {
         "success": True,
-        "events": client_events, # Return a list of event objects (dictionaries)
+        "events": raw_events_from_orchestrator,
         "responseText": result_data.get("responseText", ""),
         "adkSessionId": result_data.get("adkSessionId"),
         "queryErrorDetails": result_data.get("queryErrorDetails")
@@ -232,4 +204,4 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
     logger.debug(f"[QueryWrapper] Final payload for client: adkSessionId='{client_response_payload['adkSessionId']}', responseText length={len(client_response_payload['responseText'])}, num_events={len(client_response_payload['events'])}, num_errors={len(client_response_payload['queryErrorDetails'] or [])}")
     return client_response_payload
 
-__all__ = ['query_deployed_agent_orchestrator_logic']
+__all__ = ['query_deployed_agent_orchestrator_logic']  
