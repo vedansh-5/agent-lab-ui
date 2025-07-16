@@ -88,7 +88,8 @@ def _check_vertex_agent_deployment_status_logic(req: https_fn.CallableRequest):
 
         if current_stored_resource_name:
             try:
-                engine = reasoning_engine_client.get_reasoning_engine(name=current_stored_resource_name)
+                # MINIMAL CHANGE: Use the high-level SDK, consistent with the delete function
+                engine = deployed_agent_engines.get(current_stored_resource_name)
                 # Verify display name match if relying on stored resource name
                 if engine.display_name == expected_vertex_display_name:
                     found_engine_proto = engine
@@ -104,8 +105,8 @@ def _check_vertex_agent_deployment_status_logic(req: https_fn.CallableRequest):
 
         if not found_engine_proto: # If not found by stored name or stored name was invalid/cleared
             logger.info(f"Attempting to find engine for agent '{agent_doc_id}' by listing with display_name filter: 'display_name=\"{expected_vertex_display_name}\"'.")
-            list_request = ListReasoningEnginesRequest(parent=parent_path, filter=f'display_name="{expected_vertex_display_name}"')
-            engine_list_results = list(reasoning_engine_client.list_reasoning_engines(request=list_request))
+            # MINIMAL CHANGE: Use the simpler, high-level list method
+            engine_list_results = deployed_agent_engines.list(filter=f'display_name="{expected_vertex_display_name}"')
 
             if engine_list_results:
                 if len(engine_list_results) > 1: logger.warn(f"Multiple ({len(engine_list_results)}) engines found for display_name '{expected_vertex_display_name}'. Using the first one: {[e.name for e in engine_list_results]}.")
