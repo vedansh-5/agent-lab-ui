@@ -241,10 +241,10 @@ const AgentRunner = ({
         const agentResponse = {
             type: 'agent',
             text: runData.finalResponseText || '', // Will be empty until the end
-            events: runData.events || [],
+            events: runData.outputEvents || [],
             timestamp: new Date(),
             queryErrorDetails: runData.queryErrorDetails || null,
-            artifactUpdates: extractArtifactUpdates(runData.events)
+            artifactUpdates: extractArtifactUpdates(runData.outputEvents)
         };
 
         setConversation(prev => {
@@ -259,11 +259,14 @@ const AgentRunner = ({
         });
 
         // Update last event summary
-        const lastEvent = runData.events?.[runData.events.length - 1];
+        const lastEvent = runData.outputEvents?.[runData.outputEvents.length - 1];
         if (lastEvent) {
             let summary = `Event: ${lastEvent.type}`;
             if (lastEvent.content?.parts?.[0]?.tool_code?.name) {
                 summary = `Calling tool: ${lastEvent.content.parts[0].tool_code.name}`;
+            } else if (lastEvent.author) {
+                const authorName = lastEvent.author.split('_')[0];
+                summary = `Received content from ${authorName}`;
             }
             setLastEventSummary(summary);
         }

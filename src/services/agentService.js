@@ -81,9 +81,7 @@ export const queryAgent = async (resourceName, message, userId, sessionId, agent
             sessionId,
             agentDocId
         };
-        console.log("DEBUG: Querying agent with payload:", payload);
         const result = await queryDeployedAgentCallable(payload);
-        console.log("DEBUG: Agent query result:", result.data);
         return result.data;
     } catch (error) {
         console.error("Error querying agent:", error);
