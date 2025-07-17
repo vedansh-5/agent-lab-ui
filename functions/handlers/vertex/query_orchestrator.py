@@ -174,20 +174,7 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
         logger.error(f"[QueryWrapper] Internal error: _orchestrate_vertex_query did not return a dictionary. Got: {type(result_data)}")
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message="Internal server error processing agent query.")
 
-    serialized_events_for_client = []
     raw_events_from_orchestrator = result_data.get("events", [])
-    if raw_events_from_orchestrator:
-        for event_obj_or_dict in raw_events_from_orchestrator:
-            if hasattr(event_obj_or_dict, 'model_dump_json') and callable(event_obj_or_dict.model_dump_json):
-                serialized_events_for_client.append(event_obj_or_dict.model_dump_json())
-            elif isinstance(event_obj_or_dict, dict):
-                try:
-                    serialized_events_for_client.append(json.dumps(event_obj_or_dict))
-                except TypeError as e_json:
-                    logger.warn(f"[QueryWrapper] Failed to JSON dump an event dict: {e_json}. Storing as string: {str(event_obj_or_dict)[:200]}")
-                    serialized_events_for_client.append(str(event_obj_or_dict))
-            else:
-                serialized_events_for_client.append(str(event_obj_or_dict))
 
     run_data_to_store_in_firestore = {
         "firebaseUserId": firebase_auth_uid,
@@ -195,7 +182,7 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
         "adkSessionId": result_data.get("adkSessionId"),
         "vertexAiResourceName": resource_name,
         "inputMessage": message_text,
-        "outputEventsRawJsonList": serialized_events_for_client,
+        "outputEvents": raw_events_from_orchestrator, # Store the array of event dicts directly
         "finalResponseText": result_data.get("responseText", ""),
         "queryErrorDetails": result_data.get("queryErrorDetails"),
         "timestamp": firestore.SERVER_TIMESTAMP
@@ -209,7 +196,7 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
 
     client_response_payload = {
         "success": True,
-        "events": serialized_events_for_client,
+        "events": raw_events_from_orchestrator,
         "responseText": result_data.get("responseText", ""),
         "adkSessionId": result_data.get("adkSessionId"),
         "queryErrorDetails": result_data.get("queryErrorDetails")
@@ -217,4 +204,4 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
     logger.debug(f"[QueryWrapper] Final payload for client: adkSessionId='{client_response_payload['adkSessionId']}', responseText length={len(client_response_payload['responseText'])}, num_events={len(client_response_payload['events'])}, num_errors={len(client_response_payload['queryErrorDetails'] or [])}")
     return client_response_payload
 
-__all__ = ['query_deployed_agent_orchestrator_logic']
+__all__ = ['query_deployed_agent_orchestrator_logic']  
