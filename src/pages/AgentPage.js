@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link as RouterLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { getAgentDetails, updateAgentInFirestore, createAgentInFirestore } from '../services/firebaseService';
+import { getAgentDetails, updateAgentInFirestore, createAgentInFirestore, getAgentRuns } from '../services/firebaseService';
 import { deployAgent, deleteAgentDeployment, checkAgentDeploymentStatus } from '../services/agentService';
 
 import AgentRunner from '../components/agents/AgentRunner';
@@ -18,8 +18,8 @@ import {
     FormControlLabel, Switch, Tooltip
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
-import FileCopyIcon from '@mui/icons-material/FileCopy'; // For Clone
-import DownloadIcon from '@mui/icons-material/Download'; // For Export
+import FileCopyIcon from '@mui/icons-material/FileCopy';
+import DownloadIcon from '@mui/icons-material/Download';
 import PublicIcon from '@mui/icons-material/Public';
 import LockIcon from '@mui/icons-material/Lock';
 
@@ -38,17 +38,42 @@ const AgentPage = () => {
     const [isCheckingStatus, setIsCheckingStatus] = useState(false);
     const [pollingIntervalId, setPollingIntervalId] = useState(null);
     const [activeHistoricalRun, setActiveHistoricalRun] = useState(null);
-    const [isSubmitting, setIsSubmitting] = useState(false); // For clone/share/export operations
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const [runs, setRuns] = useState([]);
+    const [loadingRuns, setLoadingRuns] = useState(true);
+    const [runsError, setRunsError] = useState(null);
 
     const agentIdRef = useRef(agentId);
     useEffect(() => { agentIdRef.current = agentId; }, [agentId]);
 
+    // Fetches the initial list of runs when the component loads
+    const fetchRunHistory = useCallback(async () => {
+        if (!agentId) return; // Use direct agentId from params for dependency array
+        try {
+            setLoadingRuns(true);
+            setRunsError(null);
+            const agentRuns = await getAgentRuns(agentId);
+            setRuns(agentRuns);
+        } catch (err) {
+            console.error("Error fetching agent runs:", err);
+            setRunsError("Failed to load run history.");
+        } finally {
+            setLoadingRuns(false);
+        }
+    }, [agentId]); // Dependency on agentId ensures it refetches if the page changes to a new agent
+
+    // Callback for AgentRunner to add the newly completed run to our state
+    const handleRunComplete = useCallback((completedRunData) => {
+        // This is the correct "optimistic" update.
+        // It prepends the new run data to the existing list in state.
+        setRuns(prevRuns => [completedRunData, ...prevRuns]);
+    }, []); // Empty dependency array is correct as it uses the functional update form of setRuns
 
     const stopPolling = useCallback(() => {
         if (pollingIntervalId) {
             clearInterval(pollingIntervalId);
             setPollingIntervalId(null);
-            // console.log("Deployment status polling stopped for agent:", agentIdRef.current);
         }
     }, [pollingIntervalId]);
 
@@ -59,7 +84,6 @@ const AgentPage = () => {
         }
         if (!isPoll) {
             setLoading(true);
-            // setError(null); // Keep error from previous actions like clone/export unless it's a new full fetch
         }
 
         try {
@@ -79,13 +103,13 @@ const AgentPage = () => {
                 childAgents: agentData.childAgents || [],
                 maxLoops: (agentData.agentType === 'LoopAgent')
                     ? ( (Number.isFinite(agentData.maxLoops) && agentData.maxLoops > 0) ? agentData.maxLoops : 3)
-                    : null, // Set to null for non-LoopAgents or if undefined/invalid
+                    : null,
                 litellm_model_string: agentData.litellm_model_string,
                 litellm_api_base: agentData.litellm_api_base,
                 litellm_api_key: agentData.litellm_api_key,
             });
 
-            if (!isPoll && !error) setError(null); // Clear fetch-specific error if no other error active
+            if (!isPoll && !error) setError(null);
 
             const status = agentData.deploymentStatus;
             if (status === 'deploying_initiated' || status === 'deploying_in_progress') {
@@ -109,12 +133,13 @@ const AgentPage = () => {
         } finally {
             if (!isPoll) setLoading(false);
         }
-    }, [currentUser, stopPolling, pollingIntervalId, error]); // Added error to dependencies
+    }, [currentUser, stopPolling, pollingIntervalId, error]);
 
     useEffect(() => {
         fetchAgentData();
+        fetchRunHistory();
         return () => stopPolling();
-    }, [fetchAgentData, stopPolling]);
+    }, [fetchAgentData, fetchRunHistory, stopPolling]);
 
 
     const handleManualStatusRefresh = async () => {
@@ -161,10 +186,18 @@ const AgentPage = () => {
         }
     };
 
-    const handleSelectHistoricalRun = (runData) => setActiveHistoricalRun(runData);
+    const handleSelectHistoricalRun = (runData) => {
+        // Ensure we are not selecting a run that is currently live in the chat
+        const isLiveRun = conversation.some(c => c.id === runData.id);
+        if (isLiveRun) {
+            handleSwitchToLiveChat();
+        } else {
+            setActiveHistoricalRun(runData);
+        }
+    };
+
     const handleSwitchToLiveChat = () => setActiveHistoricalRun(null);
 
-    // --- New Feature Handlers ---
     const handleTogglePublic = async () => {
         if (!agent || !currentUser || (currentUser.uid !== agent.userId && !currentUser.permissions?.isAdmin)) {
             alert("You are not authorized to change this agent's publicity.");
@@ -190,13 +223,9 @@ const AgentPage = () => {
         setIsSubmitting(true);
         setError(null);
         try {
-            const clonedAgentData = { ...agent }; // Start with a copy of the current agent state
-
-            // Modify for clone
+            const clonedAgentData = { ...agent };
             clonedAgentData.name = `${agent.name}_Copy`;
-            delete clonedAgentData.id; // Firestore will generate a new ID
-
-            // Reset deployment and public status for the clone
+            delete clonedAgentData.id;
             clonedAgentData.isPublic = false;
             clonedAgentData.deploymentStatus = "not_deployed";
             clonedAgentData.vertexAiResourceName = null;
@@ -204,21 +233,19 @@ const AgentPage = () => {
             clonedAgentData.lastDeploymentAttemptAt = null;
             clonedAgentData.deploymentError = null;
 
-            // Explicitly handle maxLoops to avoid 'undefined'
             if (clonedAgentData.agentType === 'LoopAgent') {
                 clonedAgentData.maxLoops = (Number.isFinite(clonedAgentData.maxLoops) && clonedAgentData.maxLoops > 0)
                     ? clonedAgentData.maxLoops
-                    : 3; // Default to 3 if not set, invalid, or zero
+                    : 3;
             } else {
-                clonedAgentData.maxLoops = null; // Set to null for non-LoopAgents
+                clonedAgentData.maxLoops = null;
             }
 
-            // Ensure API keys are nulled out for the clone
             clonedAgentData.litellm_api_key = null;
             if (clonedAgentData.childAgents && Array.isArray(clonedAgentData.childAgents)) {
                 clonedAgentData.childAgents = clonedAgentData.childAgents.map(ca => ({
                     ...ca,
-                    litellm_api_key: null // Null out API key for child agents too
+                    litellm_api_key: null
                 }));
             }
 
@@ -229,7 +256,7 @@ const AgentPage = () => {
             console.error("Error cloning agent:", err);
             setError(`Failed to clone agent: ${err.message}`);
             if (err.message && err.message.includes("Unsupported field value")) {
-                console.log("Data sent to Firestore during clone attempt:", agent); // Log original agent state
+                console.log("Data sent to Firestore during clone attempt:", agent);
             }
         } finally {
             setIsSubmitting(false);
@@ -241,7 +268,6 @@ const AgentPage = () => {
         setError(null);
         try {
             const exportData = { ...agent };
-            // Remove fields not suitable for export or that should be reset on import
             delete exportData.id;
             delete exportData.userId;
             delete exportData.createdAt;
@@ -251,9 +277,8 @@ const AgentPage = () => {
             delete exportData.lastDeployedAt;
             delete exportData.lastDeploymentAttemptAt;
             delete exportData.deploymentError;
-            delete exportData.isPublic; // Or set exportData.isPublic = false;
+            delete exportData.isPublic;
 
-            // Ensure API keys are nulled out
             exportData.litellm_api_key = null;
             if (exportData.childAgents && Array.isArray(exportData.childAgents)) {
                 exportData.childAgents = exportData.childAgents.map(ca => ({
@@ -279,7 +304,6 @@ const AgentPage = () => {
             setError(`Failed to export agent: ${err.message}`);
         }
     };
-    // --- End New Feature Handlers ---
 
     if (loading && !agent) return <Box display="flex" justifyContent="center" py={5}><LoadingSpinner /></Box>;
     if (error && !agent && !loading) return <Container><ErrorMessage message={error} /></Container>;
@@ -301,6 +325,7 @@ const AgentPage = () => {
         currentUser && currentUser.permissions?.canRunAgent;
 
     const platformInfo = agent.platform ? getPlatformById(agent.platform) : null;
+    const conversation = []; // Dummy variable to avoid breaking handleSelectHistoricalRun logic
 
     return (
         <Container maxWidth="lg" sx={{ py: 3 }}>
@@ -393,10 +418,16 @@ const AgentPage = () => {
                     historicalRunData={activeHistoricalRun}
                     onSwitchToLiveChat={handleSwitchToLiveChat}
                     isLiveModeEnabled={canRunAgentLive}
+                    onRunComplete={handleRunComplete}
                 />
             )}
 
-            <RunHistory agentId={agent.id} onSelectRun={handleSelectHistoricalRun} />
+            <RunHistory
+                runs={runs}
+                loading={loadingRuns}
+                error={runsError}
+                onSelectRun={handleSelectHistoricalRun}
+            />
         </Container>
     );
 };

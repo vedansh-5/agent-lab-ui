@@ -1,33 +1,13 @@
 // src/components/agents/RunHistory.js
-import React, { useState, useEffect } from 'react';
-import { getAgentRuns } from '../../services/firebaseService';
+import React from 'react';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ErrorMessage from '../common/ErrorMessage';
 import RunHistoryItem from './RunHistoryItem';
 import { Paper, Typography, Box } from '@mui/material';
 
-const RunHistory = ({ agentId, onSelectRun }) => { // Added onSelectRun prop
-    const [runs, setRuns] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-
-    useEffect(() => {
-        const fetchRuns = async () => {
-            if (!agentId) return;
-            try {
-                setLoading(true);
-                setError(null);
-                const agentRuns = await getAgentRuns(agentId);
-                setRuns(agentRuns);
-            } catch (err) {
-                console.error("Error fetching agent runs:", err);
-                setError("Failed to load run history.");
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchRuns();
-    }, [agentId]);
+const RunHistory = ({ runs, loading, error, onSelectRun }) => {
+    // This component is now fully controlled by its parent (AgentPage).
+    // It receives the list of runs and loading/error states as props.
 
     if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', py:3 }}><LoadingSpinner /></Box>;
     if (error) return <ErrorMessage message={error} />;
@@ -44,7 +24,7 @@ const RunHistory = ({ agentId, onSelectRun }) => { // Added onSelectRun prop
                             key={run.id || index}
                             run={run}
                             index={index}
-                            onSelectRun={onSelectRun} // Pass down the callback
+                            onSelectRun={onSelectRun}
                         />
                     ))}
                 </Box>

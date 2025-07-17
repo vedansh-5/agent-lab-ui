@@ -12,16 +12,17 @@ import {
     query,
     where,
     serverTimestamp,
-    orderBy
+    orderBy,
+    onSnapshot // Import onSnapshot
 } from 'firebase/firestore';
 
-// Agents  
+// Agents
 export const createAgentInFirestore = async (userId, agentData, isImport = false) => {
     try {
         const dataToSave = {
             userId,
             ...agentData,
-            isPublic: false, // Always private on creation/import  
+            isPublic: false, // Always private on creation/import
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
             deploymentStatus: "not_deployed",
@@ -30,21 +31,19 @@ export const createAgentInFirestore = async (userId, agentData, isImport = false
             lastDeploymentAttemptAt: null,
             deploymentError: null,
         };
-        // Remove fields that should not be in the agentData from import  
+        // Remove fields that should not be in the agentData from import
         if (isImport) {
-            delete dataToSave.id; // Firestore will generate  
-            delete dataToSave.userId; // Already set above  
-            // isPublic, createdAt, etc. are set above.
+            delete dataToSave.id; // Firestore will generate
+            delete dataToSave.userId; // Already set above
         }
 
-
         const docRef = await addDoc(collection(db, "agents"), {
-            userId, // ensure userId is explicitly set for the doc owner  
-            ...agentData, // contains the core config  
-            isPublic: false, // All new/imported agents start as private  
+            userId,
+            ...agentData,
+            isPublic: false,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
-            deploymentStatus: "not_deployed", // New/imported agents are not deployed  
+            deploymentStatus: "not_deployed",
             vertexAiResourceName: null,
             lastDeployedAt: null,
             lastDeploymentAttemptAt: null,
@@ -57,14 +56,12 @@ export const createAgentInFirestore = async (userId, agentData, isImport = false
     }
 };
 
-// Renamed from getUserAgents to be more specific  
 export const getMyAgents = async (userId) => {
     const q = query(collection(db, "agents"), where("userId", "==", userId), orderBy("updatedAt", "desc"));
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 };
 
-// New function to get public agents  
 export const getPublicAgents = async (currentUserId) => {
     const q = query(
         collection(db, "agents"),
@@ -72,7 +69,6 @@ export const getPublicAgents = async (currentUserId) => {
         orderBy("updatedAt", "desc")
     );
     const querySnapshot = await getDocs(q);
-    // Filter out agents owned by the current user, as they'll be in "My Agents"  
     return querySnapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
         .filter(agent => agent.userId !== currentUserId);
@@ -85,7 +81,6 @@ export const getAgentDetails = async (agentId) => {
     if (docSnap.exists()) {
         return { id: docSnap.id, ...docSnap.data() };
     } else {
-        // console.error("Agent not found in Firestore with ID:", agentId); // Firebase console logs this.  
         throw new Error("Agent not found");
     }
 };
@@ -99,19 +94,35 @@ export const updateAgentInFirestore = async (agentId, updatedData) => {
 };
 
 export const deleteAgentFromFirestore = async (agentId) => {
-    // Before deleting the agent, consider deleting its subcollections (e.g., runs) if necessary.  
-    // This example does not implement recursive deletion for subcollections.  
     await deleteDoc(doc(db, "agents", agentId));
 };
 
-// Agent Runs  
+// Agent Runs
 export const getAgentRuns = async (agentId) => {
     const q = query(collection(db, "agents", agentId, "runs"), orderBy("timestamp", "desc"));
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 };
 
-// Gofannon Tool Manifest  
+// New function to listen to a specific agent run in real-time
+export const listenToAgentRun = (agentId, runId, onUpdate) => {
+    const runRef = doc(db, "agents", agentId, "runs", runId);
+    const unsubscribe = onSnapshot(runRef, (docSnap) => {
+        if (docSnap.exists()) {
+            onUpdate({ id: docSnap.id, ...docSnap.data() });
+        } else {
+            console.warn(`Run document ${runId} does not exist or was deleted.`);
+            onUpdate(null, new Error("Run document not found."));
+        }
+    }, (error) => {
+        console.error(`Error listening to run document ${runId}:`, error);
+        onUpdate(null, error);
+    });
+
+    return unsubscribe; // Return the unsubscribe function to the caller
+};
+
+// Gofannon Tool Manifest
 export const getStoredGofannonManifest = async () => {
     const docRef = doc(db, "gofannonToolManifest", "latest");
     const docSnap = await getDoc(docRef);
@@ -122,7 +133,7 @@ export const getStoredGofannonManifest = async () => {
 };
 
 
-// --- User Profile and Permissions Functions ---  
+// --- User Profile and Permissions Functions ---
 export const ensureUserProfile = async (authUser) => {
     if (!authUser) return null;
     const userRef = doc(db, "users", authUser.uid);
