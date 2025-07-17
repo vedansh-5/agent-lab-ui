@@ -81,15 +81,9 @@ export const queryAgent = async (resourceName, message, userId, sessionId, agent
             sessionId,
             agentDocId
         };
-        // This key is no longer used by the refactored backend, but leaving it won't hurt.
-        // It's better to align with the new backend which reads context from the message directly.
-        // if (stuffedContextItems && stuffedContextItems.length > 0) {
-        //     payload.stuffedContextItems = stuffedContextItems;
-        // }
-        console.log('DEBUG: Querying agent with payload:', payload);
+        console.log("DEBUG: Querying agent with payload:", payload);
         const result = await queryDeployedAgentCallable(payload);
-        console.log('DEBUG: Query result:', result);
-        // The result.data now contains { success, runId, adkSessionId, ... }
+        console.log("DEBUG: Agent query result:", result.data);
         return result.data;
     } catch (error) {
         console.error("Error querying agent:", error);

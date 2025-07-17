@@ -146,6 +146,7 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
         "inputMessage": message_text,
         "events": [],
         "startTimestamp": firestore.SERVER_TIMESTAMP,
+        "timestamp": firestore.SERVER_TIMESTAMP,
         "clientProvidedSessionId": session_id_from_client
     }
 

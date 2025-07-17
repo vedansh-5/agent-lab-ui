@@ -1,7 +1,7 @@
 // src/components/agents/AgentRunner.js
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { queryAgent } from '../../services/agentService';
-import { listenToAgentRun } from '../../services/firebaseService';
+import { listenToAgentRun } from '../../services/firebaseService'; // New import for listener
 import ErrorMessage from '../common/ErrorMessage';
 import AgentReasoningLogDialog from './AgentReasoningLogDialog';
 import { muiMarkdownComponentsConfig } from '../common/MuiMarkdownComponents';
@@ -33,6 +33,7 @@ import ContextDetailsDialog from '../context_stuffing/ContextDetailsDialog';
 import { fetchWebPageContent, fetchGitRepoContents, processPdfContent } from '../../services/contextService';
 
 
+// Helper function to extract artifact updates
 const extractArtifactUpdates = (events) => {
     const updates = {};
     if (!events || !Array.isArray(events)) return null;
@@ -62,14 +63,13 @@ const AgentRunner = ({
                          adkUserId,
                          historicalRunData,
                          onSwitchToLiveChat,
-                         isLiveModeEnabled,
-                         onRunComplete
+                         isLiveModeEnabled
                      }) => {
     const [message, setMessage] = useState('');
     const [conversation, setConversation] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [isStreaming, setIsStreaming] = useState(false);
-    const [lastEventSummary, setLastEventSummary] = useState('');
+    const [isLoading, setIsLoading] = useState(false); // For the initial API call
+    const [isStreaming, setIsStreaming] = useState(false); // For the Firestore listener phase
+    const [lastEventSummary, setLastEventSummary] = useState(''); // For the "nice-to-have" feature
     const [error, setError] = useState(null);
     const [currentSessionId, setCurrentSessionId] = useState(null);
 
@@ -95,6 +95,7 @@ const AgentRunner = ({
     }, []);
 
     useEffect(() => {
+        // Cleanup listener on component unmount
         return () => cleanupListener();
     }, [cleanupListener]);
 
@@ -224,10 +225,9 @@ const AgentRunner = ({
         }
     };
 
-    const handleRunUpdate = (runData, error) => {
-        if (error || !runData) {
-            const errorMessage = error?.message || "The agent run was not found or an error occurred while listening for updates.";
-            setError(errorMessage);
+    const handleRunUpdate = (runData) => {
+        if (!runData) {
+            setError("The agent run was not found or an error occurred while listening for updates.");
             setIsStreaming(false);
             cleanupListener();
             return;
@@ -237,9 +237,10 @@ const AgentRunner = ({
             setCurrentSessionId(runData.adkSessionId);
         }
 
+        // Update the agent's message in the conversation
         const agentResponse = {
             type: 'agent',
-            text: runData.finalResponseText || '',
+            text: runData.finalResponseText || '', // Will be empty until the end
             events: runData.events || [],
             timestamp: new Date(),
             queryErrorDetails: runData.queryErrorDetails || null,
@@ -257,6 +258,7 @@ const AgentRunner = ({
             return newConversation;
         });
 
+        // Update last event summary
         const lastEvent = runData.events?.[runData.events.length - 1];
         if (lastEvent) {
             let summary = `Event: ${lastEvent.type}`;
@@ -266,13 +268,11 @@ const AgentRunner = ({
             setLastEventSummary(summary);
         }
 
+        // Check if the run is complete
         if (runData.status === 'completed' || runData.status === 'error') {
             setIsStreaming(false);
             setLastEventSummary('');
             cleanupListener();
-            if (onRunComplete) {
-                onRunComplete(runData); // Crucially, pass the final data object
-            }
         }
     };
 
@@ -300,19 +300,22 @@ const AgentRunner = ({
         setConversation(prev => [...prev, userMessageEntry]);
 
         setMessage('');
-        setIsLoading(true);
+        setIsLoading(true); // Start loading for the initial API call
         setError(null);
         setLastEventSummary('');
 
         try {
-            const result = await queryAgent(agentResourceName, combinedMessageForAgent, adkUserId, currentSessionId, agentFirestoreId);
+            // This call now returns quickly with the runId
+            const result = await queryAgent(agentResourceName, combinedMessageForAgent, adkUserId, currentSessionId, agentFirestoreId, activeContextItems);
 
             if (result.success && result.runId) {
-                setIsLoading(false);
-                setIsStreaming(true);
+                setIsLoading(false); // Initial call is done
+                setIsStreaming(true); // Now we start streaming from Firestore
 
+                // Add a placeholder for the agent's response
                 setConversation(prev => [...prev, { type: 'agent', id: result.runId, text: '', events: [], timestamp: new Date() }]);
 
+                // Start listening to the run document
                 unsubscribeRunListener.current = listenToAgentRun(agentFirestoreId, result.runId, handleRunUpdate);
             } else {
                 const errorMessage = result.message || "Failed to initiate agent run.";
@@ -358,7 +361,6 @@ const AgentRunner = ({
 
     const sendButtonDisabled = isLoading || isStreaming || isContextLoading || isHistoricalView || (!message.trim() && !hasNewContextToProcess);
     const inputControlsDisabled = isLoading || isStreaming || isContextLoading || isHistoricalView;
-
 
     return (
         <Paper elevation={3} sx={{ p: { xs: 2, md: 3 }, mt: 4 }}>
@@ -454,7 +456,12 @@ const AgentRunner = ({
 
             {canAttemptLiveChat && (
                 <Box component="form" onSubmit={handleSendMessage} sx={{ display: 'flex', alignItems: 'flex-end', gap: 1 }}>
-                    <TextField fullWidth variant="outlined" value={message} onChange={(e) => setMessage(e.target.value)} placeholder={inputControlsDisabled ? "Agent is running..." : "Type your message to the agent..."} disabled={inputControlsDisabled} onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e);}}} size="small" multiline maxRows={5} />
+                    <TextField fullWidth variant="outlined"
+                               value={message}
+                               onChange={(e) => setMessage(e.target.value)}
+                               placeholder={inputControlsDisabled ? "Agent is running..." : "Type your message to the agent..."}
+                               disabled={inputControlsDisabled}
+                               onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e);}}} size="small" multiline maxRows={5} />
                     <ContextStuffingDropdown onOptionSelected={handleContextOptionSelected} disabled={inputControlsDisabled} />
                     <Button type="submit" variant="contained" color="primary" disabled={sendButtonDisabled} endIcon={<SendIcon />} sx={{ height: '100%', alignSelf: 'stretch' }} >Send</Button>
                 </Box>
