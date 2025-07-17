@@ -97,6 +97,32 @@ This project uses Firebase for authentication, database, backend functions, and 
 2. If this is your first time using Functions, you might be prompted to upgrade your project to the "Blaze (pay as you go)" plan. Firebase Functions (beyond the free tier) require this. Click "**Upgrade project**" and follow the steps to set up a billing account if you haven't already.
 3. Once billing is set up, you should see the Functions dashboard. No further action is needed in the console for now.
 
+### Enable Cloud Tasks (for Asynchronous Agent Runs)
+
+AgentLabUI uses Google Cloud Tasks to run agent queries in the background. This allows the user interface to remain responsive while the agent processes complex requests.
+
+1.  **Enable the Cloud Tasks API:**
+   -   In the [Google Cloud Console](https://console.cloud.google.com/), select your project.
+   -   Go to **APIs & Services > Library**.
+   -   Search for `Cloud Tasks API` and click **Enable**.
+
+2.  **Create the Task Queue:**
+    -   In the Google Cloud Console, navigate to **Cloud Tasks**.
+    -   Click **Create Queue**.
+    -   Select **Cloud Tasks (2nd gen)**.
+    -   For **Queue name**, enter exactly `executeAgentRunTask`.
+    -   For **Region**, choose the same location as your Firebase Functions (e.g., `us-central1`).
+    -   Click **Create**.
+
+3.  **Update IAM Permissions for the Service Account:** The service account that runs your Firebase Functions needs permission to create tasks.
+    -   Go to **IAM & Admin > IAM**.
+    -   Find the service account named `your-project-id@appspot.gserviceaccount.com`.
+    -   Click the pencil icon (Edit principal) for this service account.
+    -   Click **+ ADD ANOTHER ROLE** and add the following two roles:
+        -   `Cloud Tasks Enqueuer`: Allows the function to add new tasks to the queue.  
+        -   `Service Account User`: Allows the service account to generate credentials for itself, which is required when creating tasks that invoke other Cloud Functions.  
+    -   Click **Save**.
+
 ### Vertex AI Configuration (for Agent Deployment)
 
 AgentLabUI allows you to deploy agents to Google Cloud's Vertex AI using the Agent Development Kit (ADK).
