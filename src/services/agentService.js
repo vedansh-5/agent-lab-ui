@@ -6,7 +6,7 @@ const deployAgentToVertexCallable = createCallable('deploy_agent_to_vertex');
 const queryDeployedAgentCallable = createCallable('query_deployed_agent');
 const deleteVertexAgentCallable = createCallable('delete_vertex_agent');
 const checkVertexAgentDeploymentStatusCallable = createCallable('check_vertex_agent_deployment_status');
-const listMcpServerToolsCallable = createCallable('list_mcp_server_tools'); // New callable
+const listMcpServerToolsCallable = createCallable('list_mcp_server_tools');
 
 
 export const fetchGofannonTools = async () => {
@@ -29,16 +29,14 @@ export const fetchGofannonTools = async () => {
     }
 };
 
-// New function to list tools from an MCP server - UPDATED
 export const listMcpServerTools = async (serverUrl, auth) => {
     try {
-        const result = await listMcpServerToolsCallable({ serverUrl, auth }); // Pass auth object
+        const result = await listMcpServerToolsCallable({ serverUrl, auth });
         if (result.data && result.data.success && Array.isArray(result.data.tools)) {
             return { success: true, tools: result.data.tools, serverUrl: result.data.serverUrl };
         }
         const errorMessage = result.data?.message || "Failed to list tools from MCP server.";
         console.error("Error listing MCP server tools:", result.data);
-        // Add more specific error for auth failure
         if (result.data?.code === 'permission-denied') {
             return { success: false, message: `Authentication failed for ${serverUrl}. Please check your credentials.` };
         }
@@ -55,7 +53,6 @@ export const listMcpServerTools = async (serverUrl, auth) => {
 
 
 export const deployAgent = async (agentConfig, agentDocId) => {
-    // agentConfig now includes `usedMcpServerUrls` in addition to `usedCustomRepoUrls`
     try {
         const result = await deployAgentToVertexCallable({ agentConfig, agentDocId });
         return result.data;
@@ -84,9 +81,6 @@ export const queryAgent = async (resourceName, message, userId, sessionId, agent
             sessionId,
             agentDocId
         };
-        if (stuffedContextItems && stuffedContextItems.length > 0) {
-            payload.stuffedContextItems = stuffedContextItems;
-        }
         const result = await queryDeployedAgentCallable(payload);
         return result.data;
     } catch (error) {
@@ -108,10 +102,9 @@ export const deleteAgentDeployment = async (resourceName, agentDocId) => {
 export const checkAgentDeploymentStatus = async (agentDocId) => {
     try {
         const result = await checkVertexAgentDeploymentStatusCallable({ agentDocId });
-        console.log('checkAgentDeploymentStatus result:', result.data);
         return result.data;
     } catch (error) {
         console.error("Error checking agent deployment status:", error);
         throw error;
     }
-};  
+};

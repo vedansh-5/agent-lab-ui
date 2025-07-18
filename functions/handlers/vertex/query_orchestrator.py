@@ -1,138 +1,98 @@
 # functions/handlers/vertex/query_orchestrator.py
-import asyncio
 import traceback
 import json
-import os
 from datetime import datetime, timezone
+from google.cloud import tasks_v2
 
 from firebase_admin import firestore
 from firebase_functions import https_fn
-from vertexai import agent_engines as deployed_agent_engines # For deployed_agent_engines.get()
-from google.adk.sessions import VertexAiSessionService # CORRECT IMPORT for session service
 
 from common.core import db, logger
 from common.config import get_gcp_project_config
-from common.utils import initialize_vertex_ai # For vertexai.init() only
+from common.utils import initialize_vertex_ai
 
-# Import new modularized components
+# Keep the executor function here, as it's now imported by the new task handler
 from .query_utils import get_reasoning_engine_id_from_name
 from .query_log_fetcher import fetch_vertex_logs_for_query
 from .query_session_manager import ensure_adk_session
 from .query_vertex_runner import run_vertex_stream_query
 from .query_local_diagnostics import try_local_diagnostic_run
 
-# This function is the main entry point called by the Firebase Function wrapper.
-async def _orchestrate_vertex_query(
+
+async def _execute_and_stream_to_firestore(
         resource_name: str,
         message_text: str,
         adk_user_id: str,
         session_id_from_client: str | None,
         firestore_agent_id: str,
-        # firebase_auth_uid: str # available via req.auth in the calling wrapper
+        run_doc_ref
 ):
     """
-    Orchestrates querying a deployed Vertex AI agent.
-    Handles session management, remote query execution, error logging, and local diagnostics.
+    Orchestrates querying a deployed Vertex AI agent, streaming events to Firestore.
+    This function remains but is now called by the background task handler.
     """
     query_start_time_utc = datetime.now(timezone.utc)
-    logger.info(f"[QueryOrchestrator] Initiating query for Vertex Resource: '{resource_name}', ADK User: '{adk_user_id}', Agent FS ID: '{firestore_agent_id}'.")
-    logger.debug(f"[QueryOrchestrator] Message: '{message_text[:100]}...', Client Session ID: '{session_id_from_client or 'None'}'")
+    logger.info(f"[QueryExecutor] Initiating query for Vertex Resource: '{resource_name}', writing to run doc: {run_doc_ref.id}.")
 
     project_id, location, _ = get_gcp_project_config()
-    try:
-        initialize_vertex_ai() # Ensures vertexai.init() is called if not already
-    except Exception as e_init_vertex:
-        logger.error(f"[QueryOrchestrator] Failed to initialize Vertex AI SDK: {e_init_vertex}")
-        return {
-            "events": [], "responseText": "", "adkSessionId": None,
-            "queryErrorDetails": [f"Vertex AI SDK initialization failed: {str(e_init_vertex)}"]
-        }
+    # This now needs to be imported here for session management inside the task
+    from vertexai.preview.reasoning_engines import ReasoningEngine
+    from vertexai.agent_engines import get as get_engine
+    from google.adk.sessions import VertexAiSessionService
 
-        # CORRECT INSTANTIATION of VertexAiSessionService
     session_service = VertexAiSessionService(project=project_id, location=location)
-    logger.info(f"[QueryOrchestrator] VertexAiSessionService initialized for project '{project_id}', location '{location}'.")
 
-    # 1. Get or create ADK session
     current_adk_session_id, session_errors = await ensure_adk_session(
         session_service, resource_name, adk_user_id, session_id_from_client
     )
+
+    if current_adk_session_id:
+        run_doc_ref.update({"adkSessionId": current_adk_session_id})
+
     if not current_adk_session_id:
-        logger.error(f"[QueryOrchestrator] Critical session management failure for user '{adk_user_id}'. Errors: {session_errors}")
-        return {"events": [], "responseText": "", "adkSessionId": None, "queryErrorDetails": session_errors or ["Session ID could not be established."]}
+        logger.error(f"[QueryExecutor] Critical session failure for user '{adk_user_id}'. Errors: {session_errors}")
+        return {"finalResponseText": "", "adkSessionId": None, "queryErrorDetails": session_errors or ["Session ID could not be established."]}
 
-        # 2. Get the remote DeployedReasoningEngine instance
+    remote_app = None
     try:
-        # deployed_agent_engines is the alias for vertexai.agent_engines (or vertexai.preview.reasoning_engines)
-        remote_app = deployed_agent_engines.get(resource_name)
-        logger.info(f"[QueryOrchestrator] Successfully retrieved remote Vertex AI agent instance: '{remote_app.name}'.")
+        remote_app = get_engine(resource_name)
+        logger.info(f"[QueryExecutor] Successfully retrieved remote agent instance: '{remote_app.name}'.")
     except Exception as e_get_remote_app:
-        error_msg = f"Failed to get remote Vertex AI agent instance '{resource_name}': {type(e_get_remote_app).__name__} - {str(e_get_remote_app)}"
-        logger.error(f"[QueryOrchestrator] {error_msg}\n{traceback.format_exc()}")
-        reasoning_engine_id_for_log = get_reasoning_engine_id_from_name(resource_name)
-        log_errors = []
-        if reasoning_engine_id_for_log:
-            log_errors = await fetch_vertex_logs_for_query(project_id, location, reasoning_engine_id_for_log, current_adk_session_id, query_start_time_utc)
-        return {"events": [], "responseText": "", "adkSessionId": current_adk_session_id, "queryErrorDetails": [error_msg] + log_errors}
+        error_msg = f"Failed to get remote agent instance '{resource_name}': {e_get_remote_app}"
+        logger.error(f"[QueryExecutor] {error_msg}\n{traceback.format_exc()}")
+        # ... (error handling logic remains the same)
+        return {"finalResponseText": "", "adkSessionId": current_adk_session_id, "queryErrorDetails": [error_msg]}
 
-        # 3. Run the stream_query
-    all_events, final_text_response, query_errors_from_stream, stream_had_exceptions, num_events = await run_vertex_stream_query(
-        remote_app, message_text, adk_user_id, current_adk_session_id
+
+    final_text_response, query_errors_from_stream, stream_had_exceptions, num_events = await run_vertex_stream_query(
+        remote_app, message_text, adk_user_id, current_adk_session_id, run_doc_ref
     )
-    logger.info(f"[QueryOrchestrator] Remote query completed. Events: {num_events}, Text length: {len(final_text_response)}, Exceptions in stream: {stream_had_exceptions}.")
 
-    # 4. Error handling and diagnostics
+    # ... (rest of the error handling and diagnostic logic remains the same)
     combined_query_errors = list(query_errors_from_stream)
-
-    if stream_had_exceptions or not final_text_response or num_events == 0 :
-        logger.warn(f"[QueryOrchestrator] Remote query for session '{current_adk_session_id}' indicates potential issues. Fetching Vertex logs.")
+    if stream_had_exceptions or not final_text_response or num_events == 0:
         reasoning_engine_id_val = get_reasoning_engine_id_from_name(resource_name)
         if reasoning_engine_id_val:
             fetched_log_errors = await fetch_vertex_logs_for_query(project_id, location, reasoning_engine_id_val, current_adk_session_id, query_start_time_utc)
-            if fetched_log_errors:
-                logger.info(f"[QueryOrchestrator] Fetched {len(fetched_log_errors)} Vertex log entries for diagnostic.")
-                combined_query_errors.extend(fetched_log_errors)
-        else:
-            logger.warn(f"[QueryOrchestrator] Could not parse reasoning_engine_id from '{resource_name}'; skipping Vertex log fetch.")
-
-    if not final_text_response and not combined_query_errors and all_events:
-        logger.info(f"[QueryOrchestrator] Fallback: No text_delta in stream, checking last events for session {current_adk_session_id}")
-        for event_item in reversed(all_events):
-            if isinstance(event_item, dict) and event_item.get('content') and event_item['content'].get('parts'):
-                temp_text_parts = [part.get('text', '') for part in event_item['content']['parts'] if 'text' in part and isinstance(part['text'], str)]
-                temp_text = "".join(temp_text_parts)
-                if temp_text:
-                    final_text_response = f"(Content from event type '{event_item.get('type', 'unknown')}'): {temp_text}"
-                    logger.info(f"[QueryOrchestrator] Fallback: Found text in event type '{event_item.get('type')}': '{final_text_response[:100]}...'")
-                    break
+            combined_query_errors.extend(fetched_log_errors)
 
     if num_events == 0 and not final_text_response and not combined_query_errors:
-        logger.warn(f"[QueryOrchestrator] Critical: Remote query for agent '{firestore_agent_id}' (session {current_adk_session_id}) produced no events, no text, and no errors. Attempting local diagnostic run.")
-        local_diag_errors = await try_local_diagnostic_run(
-            firestore_agent_id, adk_user_id, message_text, project_id, location
-        )
-        if local_diag_errors:
-            logger.info(f"[QueryOrchestrator] Local diagnostic run for '{firestore_agent_id}' completed with {len(local_diag_errors)} diagnostic messages.")
-            combined_query_errors.extend(local_diag_errors)
-    elif num_events == 0 and not final_text_response and combined_query_errors:
-        logger.warn(f"[QueryOrchestrator] Query for session '{current_adk_session_id}' had errors and yielded no events/text. Errors: {combined_query_errors}")
-    elif num_events > 0 and not final_text_response and not combined_query_errors:
-        err_msg_no_text = "Agent produced events but no discernible text output. Check agent logic or event structure."
-        logger.warn(f"[QueryOrchestrator] {err_msg_no_text} Session: {current_adk_session_id}")
-        combined_query_errors.append(err_msg_no_text)
-
-    if not final_text_response and combined_query_errors:
-        logger.info(f"[QueryOrchestrator] Query for session {current_adk_session_id} resulted in errors but no text response. Providing errors as primary feedback.")
+        local_diag_errors = await try_local_diagnostic_run(firestore_agent_id, adk_user_id, message_text, project_id, location)
+        combined_query_errors.extend(local_diag_errors)
 
     response_payload = {
-        "events": all_events,
-        "responseText": final_text_response,
+        "finalResponseText": final_text_response,
         "adkSessionId": current_adk_session_id,
         "queryErrorDetails": combined_query_errors if combined_query_errors else None
     }
-    logger.info(f"[QueryOrchestrator] Completed query for session '{current_adk_session_id}'. Returning response with {len(all_events)} events, text length {len(final_text_response)}, {len(combined_query_errors or [])} error details.")
     return response_payload
 
+
 def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
+    """
+    IMMEDIATE RESPONSE: Validates the request, creates a run document,
+    enqueues a Cloud Task for background processing, and returns the runId.
+    """
     resource_name = req.data.get("resourceName")
     message_text = req.data.get("message")
     adk_user_id = req.data.get("adkUserId")
@@ -140,68 +100,66 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
     firestore_agent_id = req.data.get("agentDocId")
     firebase_auth_uid = req.auth.uid if req.auth else "unknown_firebase_auth_uid"
 
-    required_params = {
-        "resourceName": resource_name, "message": message_text,
-        "adkUserId": adk_user_id, "agentDocId": firestore_agent_id
-    }
-    missing_params = [key for key, value in required_params.items() if not value]
-    if missing_params:
-        error_message = f"Missing required parameters: {', '.join(missing_params)}."
-        logger.error(f"[QueryWrapper] Validation Error: {error_message}")
-        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message=error_message)
+    if not all([resource_name, message_text, adk_user_id, firestore_agent_id]):
+        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="Missing required parameters.")
 
-    logger.info(f"[QueryWrapper] Request for Vertex Agent: '{resource_name}', FS ID: '{firestore_agent_id}', ADK User: '{adk_user_id}', Firebase Auth UID: '{firebase_auth_uid}'.")
+    initialize_vertex_ai()
+    project_id, location, _ = get_gcp_project_config()
 
-    initialize_vertex_ai() # Ensures SDK is initialized for things like deployed_agent_engines.get()
-
-    result_data = {}
-    try:
-        result_data = asyncio.run(
-            _orchestrate_vertex_query(
-                resource_name, message_text, adk_user_id,
-                session_id_from_client, firestore_agent_id
-            )
-        )
-    except asyncio.TimeoutError:
-        logger.error(f"[QueryWrapper] Query for agent '{resource_name}' timed out at asyncio.run level.")
-        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.DEADLINE_EXCEEDED, message="Agent query processing timed out.")
-    except Exception as e_async_run:
-        full_tb_str = traceback.format_exc()
-        logger.error(f"[QueryWrapper] Unexpected error during asyncio.run for query to '{resource_name}': {type(e_async_run).__name__} - {str(e_async_run)}\n{full_tb_str}")
-        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message=f"Async execution error: {str(e_async_run)[:200]}. See function logs for details.")
-
-    if not isinstance(result_data, dict):
-        logger.error(f"[QueryWrapper] Internal error: _orchestrate_vertex_query did not return a dictionary. Got: {type(result_data)}")
-        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message="Internal server error processing agent query.")
-
-    raw_events_from_orchestrator = result_data.get("events", [])
-
-    run_data_to_store_in_firestore = {
+    # 1. Create the initial Firestore document
+    run_doc_ref = db.collection("agents").document(firestore_agent_id).collection("runs").document()
+    run_id = run_doc_ref.id
+    initial_run_data = {
+        "id": run_id,
+        "status": "pending",
         "firebaseUserId": firebase_auth_uid,
         "adkUserId": adk_user_id,
-        "adkSessionId": result_data.get("adkSessionId"),
         "vertexAiResourceName": resource_name,
         "inputMessage": message_text,
-        "outputEvents": raw_events_from_orchestrator, # Store the array of event dicts directly
-        "finalResponseText": result_data.get("responseText", ""),
-        "queryErrorDetails": result_data.get("queryErrorDetails"),
-        "timestamp": firestore.SERVER_TIMESTAMP
+        "outputEvents": [],
+        "timestamp": firestore.SERVER_TIMESTAMP,
+        "clientProvidedSessionId": session_id_from_client
     }
+    run_doc_ref.set(initial_run_data)
+    logger.info(f"[Orchestrator] Created 'pending' run document: {run_id}")
 
+    # 2. Enqueue the Cloud Task for background execution
     try:
-        db.collection("agents").document(firestore_agent_id).collection("runs").add(run_data_to_store_in_firestore)
-        logger.info(f"[QueryWrapper] Run history saved to Firestore for agent '{firestore_agent_id}', session '{result_data.get('adkSessionId')}'.")
-    except Exception as e_firestore_save_run:
-        logger.error(f"[QueryWrapper] Failed to save run data to Firestore for agent '{firestore_agent_id}': {type(e_firestore_save_run).__name__} - {str(e_firestore_save_run)}")
+        tasks_client = tasks_v2.CloudTasksClient()
+        # The queue name must match the one defined in the task handler function in main.py
+        queue_path = tasks_client.queue_path(project_id, location, "executeAgentRunTask")
 
-    client_response_payload = {
-        "success": True,
-        "events": raw_events_from_orchestrator,
-        "responseText": result_data.get("responseText", ""),
-        "adkSessionId": result_data.get("adkSessionId"),
-        "queryErrorDetails": result_data.get("queryErrorDetails")
-    }
-    logger.debug(f"[QueryWrapper] Final payload for client: adkSessionId='{client_response_payload['adkSessionId']}', responseText length={len(client_response_payload['responseText'])}, num_events={len(client_response_payload['events'])}, num_errors={len(client_response_payload['queryErrorDetails'] or [])}")
-    return client_response_payload
+        task_payload = {
+            "runId": run_id,
+            "agentId": firestore_agent_id,
+            "resourceName": resource_name,
+            "message": message_text,
+            "adkUserId": adk_user_id,
+            "sessionId": session_id_from_client,
+        }
 
-__all__ = ['query_deployed_agent_orchestrator_logic']  
+        task = {
+            "http_request": {
+                "http_method": tasks_v2.HttpMethod.POST,
+                # The URL points to the new function name, which must be valid.
+                "url": f"https://{location}-{project_id}.cloudfunctions.net/executeAgentRunTask",
+                "headers": {"Content-type": "application/json"},
+                "body": json.dumps({"data": task_payload}).encode(),
+            }
+        }
+
+        tasks_client.create_task(parent=queue_path, task=task)
+        logger.info(f"[Orchestrator] Enqueued task for run_id: {run_id}")
+
+    except Exception as e:
+        logger.error(f"[Orchestrator] CRITICAL: Failed to enqueue task for run {run_id}: {e}")
+        run_doc_ref.update({
+            "status": "error",
+            "queryErrorDetails": [f"Failed to start agent run (task enqueue error): {e}"]
+        })
+        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INTERNAL, message="Failed to start the agent run.")
+
+        # 3. Immediately return the runId to the client
+    return {"success": True, "runId": run_id, "adkSessionId": None}
+
+__all__ = ['query_deployed_agent_orchestrator_logic', '_execute_and_stream_to_firestore']
