@@ -20,7 +20,7 @@ async def get_full_message_history(chat_id, leaf_message_id):
     """Reconstructs the conversation history leading up to a specific message."""
     messages = {}
     messages_collection = db.collection("chats").document(chat_id).collection("messages")
-    docs = await messages_collection.get()
+    docs = messages_collection.get()
     for doc in docs:
         messages[doc.id] = doc.to_dict()
 
@@ -44,7 +44,7 @@ async def _execute_and_stream_to_firestore(
     Orchestrates querying a deployed Vertex AI agent OR a model, streaming events to Firestore.
     """
     assistant_message_ref = db.collection("chats").document(chat_id).collection("messages").document(assistant_message_id)
-    assistant_message_snap = await assistant_message_ref.get()
+    assistant_message_snap = assistant_message_ref.get()
     if not assistant_message_snap.exists:
         logger.error(f"[TaskExecutor] Assistant message {assistant_message_id} not found. Aborting task.")
         return
@@ -74,7 +74,7 @@ async def _execute_and_stream_to_firestore(
     else: # Should not happen due to orchestrator validation
         raise ValueError("Task requires either agentId or modelId")
 
-    participant_snap = await participant_config_ref.get()
+    participant_snap = participant_config_ref.get()
     if not participant_snap.exists:
         raise ValueError(f"Participant config not found for ID: {agent_id or model_id}")
     participant_config = participant_snap.to_dict()
@@ -140,7 +140,7 @@ async def _execute_and_stream_to_firestore(
                         final_text += part["text"]
 
                         # Update the Firestore document with the ephemeral run results
-        await assistant_message_ref.update({
+        assistant_message_ref.update({
             "content": final_text,
             "run.outputEvents": events,
             "run.finalResponseText": final_text,
@@ -183,13 +183,13 @@ async def _run_agent_task_logic(data: dict):
         if "content" not in assistant_message_ref.get().to_dict():
             final_update_payload["content"] = final_state_data.get("finalResponseText", "")
 
-        await assistant_message_ref.update(final_update_payload)
+        assistant_message_ref.update(final_update_payload)
         logger.info(f"[TaskHandler] Message {assistant_message_id} completed with status: {final_update_payload['run.status']}")
 
     except Exception as e:
         error_msg = f"Unhandled exception in task handler for message {assistant_message_id}: {type(e).__name__} - {e}"
         logger.error(f"{error_msg}\n{traceback.format_exc()}")
-        await assistant_message_ref.update({
+        assistant_message_ref.update({
             "run.status": "error",
             "run.queryErrorDetails": firestore.ArrayUnion([f"Task handler exception: {error_msg}"]),
             "run.completedTimestamp": firestore.SERVER_TIMESTAMP

@@ -78,7 +78,7 @@ async def get_model_config_from_firestore(model_id: str) -> dict:
         raise ValueError("model_id cannot be empty.")
     try:
         model_ref = db.collection("models").document(model_id)
-        model_doc = await model_ref.get() # Use async get
+        model_doc = model_ref.get()
         if not model_doc.exists:
             raise ValueError(f"Model with ID '{model_id}' not found in Firestore.")
         return model_doc.to_dict()
@@ -294,31 +294,32 @@ async def _prepare_agent_kwargs_from_config(merged_agent_and_model_config, adk_a
         "output_key": merged_agent_and_model_config.get("outputKey"),
     }
 
-    model_settings = merged_agent_and_model_config
-    current_generate_content_config_kwargs = {} # For ADK Agent's direct model params
+    # --- Collect parameters for GenerateContentConfig ---
+    model_params = merged_agent_and_model_config
+    generate_config_kwargs = {}
 
-    if "temperature" in model_settings and model_settings["temperature"] is not None:
-        try: agent_kwargs["temperature"] = float(model_settings["temperature"])
-        except (ValueError, TypeError): logger.warn(f"Invalid temperature: {model_settings['temperature']}")
-    if "maxOutputTokens" in model_settings and model_settings["maxOutputTokens"] is not None:
-        try: agent_kwargs["max_tokens"] = int(model_settings["maxOutputTokens"]) # Renamed to max_tokens for ADK Agent
-        except (ValueError, TypeError): logger.warn(f"Invalid maxOutputTokens: {model_settings['maxOutputTokens']}")
-    if "topP" in model_settings and model_settings["topP"] is not None:
-        try: current_generate_content_config_kwargs["top_p"] = float(model_settings["topP"])
-        except (ValueError, TypeError): logger.warn(f"Invalid topP: {model_settings['topP']}")
-    if "topK" in model_settings and model_settings["topK"] is not None:
-        try: current_generate_content_config_kwargs["top_k"] = int(model_settings["topK"])
-        except (ValueError, TypeError): logger.warn(f"Invalid topK: {model_settings['topK']}")
-    if "stopSequences" in model_settings and isinstance(model_settings["stopSequences"], list):
-        current_generate_content_config_kwargs["stop_sequences"] = [str(seq) for seq in model_settings["stopSequences"]]
+    if "temperature" in model_params and model_params["temperature"] is not None:
+        try: generate_config_kwargs["temperature"] = float(model_params["temperature"])
+        except (ValueError, TypeError): logger.warn(f"Invalid temperature: {model_params['temperature']}")
 
-    if current_generate_content_config_kwargs:
-        # These are passed as direct kwargs to the ADK Agent constructor if supported,
-        # or used to construct a GenerateContentConfig if the agent model expects that.
-        # LiteLlm model wrapper in ADK might pick these up if passed to Agent.
-        agent_kwargs.update(current_generate_content_config_kwargs)
-        logger.info(f"Agent '{adk_agent_name}' has additional model parameters: {current_generate_content_config_kwargs}")
+    # NOTE: The ADK expects 'max_output_tokens' inside GenerateContentConfig, not 'max_tokens' as a direct kwarg.
+    if "maxOutputTokens" in model_params and model_params["maxOutputTokens"] is not None:
+        try: generate_config_kwargs["max_output_tokens"] = int(model_params["maxOutputTokens"])
+        except (ValueError, TypeError): logger.warn(f"Invalid maxOutputTokens: {model_params['maxOutputTokens']}")
 
+    if "topP" in model_params and model_params["topP"] is not None:
+        try: generate_config_kwargs["top_p"] = float(model_params["topP"])
+        except (ValueError, TypeError): logger.warn(f"Invalid topP: {model_params['topP']}")
+
+    if "topK" in model_params and model_params["topK"] is not None:
+        try: generate_config_kwargs["top_k"] = int(model_params["topK"])
+        except (ValueError, TypeError): logger.warn(f"Invalid topK: {model_params['topK']}")
+
+    if "stopSequences" in model_params and isinstance(model_params["stopSequences"], list):
+        generate_config_kwargs["stop_sequences"] = [str(seq) for seq in model_params["stopSequences"]]
+    if generate_config_kwargs:
+        logger.info(f"Agent '{adk_agent_name}' has model generation parameters: {generate_config_kwargs}")
+        agent_kwargs["generate_content_config"] = genai_types.GenerateContentConfig(**generate_config_kwargs)
 
     return {k: v for k, v in agent_kwargs.items() if v is not None}
 
