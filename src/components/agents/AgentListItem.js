@@ -3,7 +3,7 @@ import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { Card, CardContent, CardActions, Typography, Button, Chip, Box } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+
 import DeleteIcon from '@mui/icons-material/Delete';
 import PublicIcon from '@mui/icons-material/Public'; // For Public Chip
 import { getPlatformById } from '../../constants/platformConstants';
@@ -105,16 +105,7 @@ const AgentListItem = ({ agent, onDeleteAgentConfig }) => {
                 </Typography>
             </CardContent>
             <CardActions sx={{ justifyContent: 'flex-end', pt: 0, px:2, pb:2, gap: 1 }}>
-                <Button
-                    size="small"
-                    variant="outlined"
-                    color="primary"
-                    component={RouterLink}
-                    to={`/agent/${agent.id}`}
-                    startIcon={<PlayArrowIcon />}
-                >
-                    View / Run
-                </Button>
+
                 {canManage && ( // Only owner or admin can edit
                     <Button
                         size="small"

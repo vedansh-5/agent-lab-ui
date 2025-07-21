@@ -40,7 +40,6 @@ def _run_vertex_stream_query_sync(
                 event_data_dict = event_obj
             else:
                 logger.error(f"[VertexRunner/Sync] Unexpected event type for event {event_count}: {type(event_obj)}. Skipping.")
-                # CORRECTED
                 run_doc_ref.update({"outputEvents": firestore.ArrayUnion([{"type": "unknown_event_format", "raw": str(event_obj)}])})
                 continue
 

@@ -129,25 +129,22 @@ async def _execute_and_stream_to_firestore(
         message_content = Content(role="user", parts=[Part(text=full_message_text)])
 
         final_text = ""
-        events = []
-        async for event_obj in runner.run_async(user_id=adk_user_id, session_id=session.id, new_message=message_content):
-            event_dict = event_obj.model_dump()
-            events.append(event_dict)
-            content = event_dict.get("content", {})
-            if content and content.get("parts"):
-                for part in content["parts"]:
-                    if "text" in part:
-                        final_text += part["text"]
+        errors = []
+        try:
+            async for event_obj in runner.run_async(user_id=adk_user_id, session_id=session.id, new_message=message_content):
+                event_dict = event_obj.model_dump()
+                # Stream events to Firestore for live UI updates
+                assistant_message_ref.update({"run.outputEvents": firestore.ArrayUnion([event_dict])})
+                content = event_dict.get("content", {})
+                if content and content.get("parts"):
+                    for part in content["parts"]:
+                        if "text" in part:
+                            final_text += part["text"]
+        except Exception as e_model_run:
+            logger.error(f"Error during ephemeral model run for model {model_id}: {e_model_run}")
+            errors.append(f"Model run failed: {str(e_model_run)}")
 
-                        # Update the Firestore document with the ephemeral run results
-        assistant_message_ref.update({
-            "content": final_text,
-            "run.outputEvents": events,
-            "run.finalResponseText": final_text,
-        })
-
-        return {"finalResponseText": final_text, "queryErrorDetails": None}
-
+        return {"finalResponseText": final_text, "queryErrorDetails": errors}
 
 async def _run_agent_task_logic(data: dict):
     """
@@ -174,6 +171,7 @@ async def _run_agent_task_logic(data: dict):
         )
 
         final_update_payload = {
+            "content": final_state_data.get("finalResponseText", ""),
             "run.status": "error" if final_state_data.get("queryErrorDetails") else "completed",
             "run.finalResponseText": final_state_data.get("finalResponseText", ""),
             "run.queryErrorDetails": final_state_data.get("queryErrorDetails"),
