@@ -6,10 +6,7 @@ import { getChatDetails, listenToChatMessages, addChatMessage, getModelsForProje
 import { executeQuery } from '../services/agentService';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
-import {
-    Container, Typography, Box, Paper, Button, IconButton, TextField, Menu, MenuItem, Select, InputLabel,
-    FormControl, Tooltip, Chip, Avatar
-} from '@mui/material';
+import { Container, Typography, Box, Paper, Button, IconButton, TextField, Menu, MenuItem, Select, InputLabel, FormControl, Tooltip, Chip, Avatar } from '@mui/material';
 import CallSplitIcon from '@mui/icons-material/CallSplit';
 import ChevronLeft from '@mui/icons-material/ChevronLeft';
 import ChevronRight from '@mui/icons-material/ChevronRight';
@@ -58,6 +55,58 @@ function getChildrenForMessage(messagesMap, parentId) {
         .sort((a, b) => (a.timestamp?.seconds ?? 0) - (b.timestamp?.seconds ?? 0));
 }
 
+function findLeafOfBranch(messagesMap, branchRootId) {
+    let current = messagesMap[branchRootId];
+    if (!current) return branchRootId;
+
+    while (true) {
+        const children = getChildrenForMessage(messagesMap, current.id);
+        if (children.length > 0) {
+            // If there are multiple children, we are at a fork point. The "leaf" of this branch
+            // is the latest child, which itself might be the root of a sub-branch.
+            current = children.sort((a, b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0)).pop();
+        } else {
+            // No children, this is the leaf.
+            return current.id;
+        }
+    }
+}
+
+const BranchNavigator = ({ message, messagesMap, activePath, onNavigate }) => {
+    const children = getChildrenForMessage(messagesMap, message.id);
+    if (children.length <= 1) {
+        return null;
+    }
+
+    // Find which of my children is in the active path
+    const activeChild = children.find(child => activePath.some(pathMsg => pathMsg.id === child.id));
+    // Default to the latest fork if the active path doesn't contain any of the children
+    const activeIndex = activeChild ? children.indexOf(activeChild) : children.length - 1;
+
+    const handleNav = (direction) => {
+        let newIndex = activeIndex + direction;
+        if (newIndex < 0) newIndex = children.length - 1;
+        if (newIndex >= children.length) newIndex = 0;
+        const newBranchRootId = children[newIndex].id;
+        const newLeafId = findLeafOfBranch(messagesMap, newBranchRootId);
+        onNavigate(newLeafId);
+    };
+
+    return (
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 0.5, bgcolor: 'action.hover', borderRadius: 1, p: 0.2 }}>
+            <Tooltip title="Previous Fork">
+                <IconButton size="small" onClick={() => handleNav(-1)}><ChevronLeft /></IconButton>
+            </Tooltip>
+            <Typography variant="caption" sx={{ mx: 1, fontWeight: 'medium' }}>
+                Fork {activeIndex + 1} / {children.length}
+            </Typography>
+            <Tooltip title="Next Fork">
+                <IconButton size="small" onClick={() => handleNav(1)}><ChevronRight /></IconButton>
+            </Tooltip>
+        </Box>
+    );
+};
+
 const ChatPage = () => {
     const { currentUser } = useAuth();
     const { chatId } = useParams();
@@ -79,27 +128,21 @@ const ChatPage = () => {
     const [addMenuAnchor, setAddMenuAnchor] = useState(null);
 
     // Child selection for branching/forking navigation
-    function handleChildNav(parentId, direction) {
-        // direction: -1=left, +1=right
-        const children = getChildrenForMessage(messagesMap, parentId);
-        if (!children.length) return;
-        const idx = childIndices[parentId] ?? 0;
-        let newIdx = idx + direction;
-        if (newIdx < 0) newIdx = children.length - 1;
-        if (newIdx >= children.length) newIdx = 0;
-        setChildIndices(prev => ({ ...prev, [parentId]: newIdx }));
-        setActiveLeafMsgId(children[newIdx].id);
-    }
+    const conversationPath = useMemo(() => {
+        if (!messagesMap || !activeLeafMsgId) return [];
+        return getPathToLeaf(messagesMap, activeLeafMsgId);
+    }, [messagesMap, activeLeafMsgId]);
 
     // Load chat metadata and set up listeners
     useEffect(() => {
         setLoading(true);
         let unsubscribe;
-        (async () => {
+
+        const setupListener = async () => {
             try {
                 const chatData = await getChatDetails(chatId);
                 setChat(chatData);
-                // Pre-load participants for filtering "add"
+
                 const projIds = chatData.projectIds || [];
                 const [projAgents, projModels] = await Promise.all([
                     getAgentsForProjects(projIds),
@@ -107,55 +150,64 @@ const ChatPage = () => {
                 ]);
                 setAgents(projAgents);
                 setModels(projModels);
-                // By default, all agents and models in project are available for "Add"
                 setParticipants([
                     ...projAgents.map(a => ({ type: 'agent', id: a.id, displayName: a.name })),
                     ...projModels.map(m => ({ type: 'model', id: m.id, displayName: m.name })),
                 ]);
-                if (!replyAs && projAgents[0]) setReplyAs({ type: 'agent', id: projAgents[0].id }); // Default to first agent
-                // Setup message listener
-                unsubscribe = listenToChatMessages(chatId, (msgs) => {
-                    setMessages(msgs);
-                    setMessagesMap(msgs.reduce((acc, m) => { acc[m.id] = m; return acc; }, {}));
-                    // If no active leaf, find deepest leaf message (last assistant reply, or just last message)
-                    if (msgs.length > 0 && !activeLeafMsgId) {
-                        // Find the leaf (no children, most recent)
-                        const leafCandidates = msgs.filter(m =>
-                            !msgs.some(x => x.parentMessageId === m.id)
-                        );
-                        // Default to last one if many
-                        setActiveLeafMsgId((leafCandidates[leafCandidates.length - 1] || msgs[msgs.length - 1])?.id);
+                // Use a functional update for replyAs to avoid race conditions
+                setReplyAs(prev => {
+                    if (!prev && projAgents.length > 0) {
+                        return { type: 'agent', id: projAgents[0].id };
                     }
+                    return prev;
+                });
+
+                unsubscribe = listenToChatMessages(chatId, (newMsgs) => {
+                    const newMessagesMap = newMsgs.reduce((acc, m) => ({ ...acc, [m.id]: m }), {});
+                    setMessages(newMsgs);
+                    setMessagesMap(newMessagesMap);
+
+                    setActiveLeafMsgId(prevLeafId => {
+                        // Case 1: Initial load or previous leaf was deleted. Find the latest leaf overall.
+                        if (!prevLeafId || !newMessagesMap[prevLeafId]) {
+                            const leafCandidates = newMsgs.filter(m => !newMsgs.some(x => x.parentMessageId === m.id));
+                            return (leafCandidates.sort((a, b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0)).pop()?.id || null);
+                        }
+
+                        // Case 2: A new reply chain might have been added to our current branch.
+                        // Find the deepest descendant from our previously active leaf.
+                        const newLeafId = findLeafOfBranch(newMessagesMap, prevLeafId);
+
+                        // If the new leaf is different, it means our branch grew. Update the view.
+                        // If it's the same, another branch was updated, so we stay put.
+                        return newLeafId;
+                    });
                 });
             } catch (err) {
                 setError(err.message);
             } finally {
                 setLoading(false);
             }
-        })();
-        return () => unsubscribe && unsubscribe();
-        // eslint-disable-next-line
+        };
+
+        setupListener();
+
+        return () => {
+            if (unsubscribe) {
+                unsubscribe();
+            }
+        };
     }, [chatId]);
 
-    // Path (chain) from root to current selected message
-    const conversationPath = useMemo(() => {
-        if (!messagesMap || !activeLeafMsgId) return [];
-        return getPathToLeaf(messagesMap, activeLeafMsgId);
-    }, [messagesMap, activeLeafMsgId]);
-
     // Handler for clicking fork icon
-    function handleFork(msgId) {
+    const handleFork = (msgId) => {
         setActiveLeafMsgId(msgId);
     }
 
     // Handler to select different children if a node is a fork point
-    function handleChangeForkedChild(parentId, idx) {
-        setChildIndices(prev => ({ ...prev, [parentId]: idx }));
-        const children = getChildrenForMessage(messagesMap, parentId);
-        if (children[idx]) {
-            setActiveLeafMsgId(children[idx].id);
-        }
-    }
+    const handleNavigateBranch = (newLeafId) => {
+        setActiveLeafMsgId(newLeafId);
+    };
 
     // Handler for opening "Add" participant menu
     function handleOpenAddParticipantMenu(e) { setAddMenuAnchor(e.currentTarget); }
@@ -196,12 +248,6 @@ const ChatPage = () => {
         }))
     ), [participants]);
 
-    // The current selected message's direct children (forks)
-    const currentMessageChildren = useMemo(() => {
-        if (!activeLeafMsgId) return [];
-        return getChildrenForMessage(messagesMap, activeLeafMsgId);
-    }, [messagesMap, activeLeafMsgId]);
-
     if (loading || !chat) return <Box sx={{display: 'flex', justifyContent: 'center'}}><LoadingSpinner /></Box>;
     if (error) return <ErrorMessage message={error} />;
 
@@ -211,27 +257,20 @@ const ChatPage = () => {
                 <Typography variant="h4" gutterBottom>{chat.title}</Typography>
 
                 {/* Render conversation chain */}
-                <Box sx={{ bgcolor: 'background.paper', borderRadius: 2, border: '1px solid', borderColor: 'divider', p: 2, minHeight: 320 }}>
+                <Box sx={{ bgcolor: 'background.paper', borderRadius: 2, border: '1px solid', borderColor: 'divider', p: 2, minHeight: 320, overflowY: 'auto', maxHeight: '60vh' }}>
                     {conversationPath.map((msg, idx) => {
                         const participant = parseParticipant(msg.participant, models, agents, [], currentUser);
-                        const children = getChildrenForMessage(messagesMap, msg.id);
-
-                        // If branching from this message, show child nav
-                        const isBranchPoint = children.length > 1 && idx !== conversationPath.length - 1;
-                        const currentChildIdx = childIndices[msg.id] ?? 0;
 
                         return (
                             <Box key={msg.id} sx={{ position: 'relative', mb: 2 }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                                     {participant.icon}
                                     <Typography variant="subtitle2">{participant.label}</Typography>
-                                    {msg.participant && (msg.participant.startsWith('agent:') || msg.participant.startsWith('model:')) && (
-                                        <Tooltip title="Fork conversation from this point">
-                                            <IconButton size="small" onClick={() => handleFork(msg.id)}>
-                                                <CallSplitIcon fontSize="small" style={{ transform: "rotate(180deg)" }} />
-                                            </IconButton>
-                                        </Tooltip>
-                                    )}
+                                    <Tooltip title="Create a new response from this point">
+                                        <IconButton size="small" onClick={() => handleFork(msg.id)}>
+                                            <CallSplitIcon fontSize="small" style={{ transform: "rotate(180deg)" }} />
+                                        </IconButton>
+                                    </Tooltip>
                                 </Box>
                                 <Paper variant="outlined" sx={{ p: 1.5, wordBreak: 'break-word', whiteSpace: 'pre-wrap', mb: 0.5,
                                     bgcolor: msg.participant?.startsWith('user') ? 'primary.light' : msg.participant?.startsWith('agent') ? 'grey.100' : 'secondary.light' }}>
@@ -250,16 +289,7 @@ const ChatPage = () => {
                                         </Box>
                                     )}
                                 </Paper>
-                                {/* Branch navigation if multiple children */}
-                                {isBranchPoint && (
-                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 0.5 }}>
-                                        <IconButton size="small" onClick={() => handleChildNav(msg.id, -1)}><ChevronLeft /></IconButton>
-                                        <Typography variant="caption" sx={{ mx: 1 }}>
-                                            {currentChildIdx + 1} / {children.length}
-                                        </Typography>
-                                        <IconButton size="small" onClick={() => handleChildNav(msg.id, +1)}><ChevronRight /></IconButton>
-                                    </Box>
-                                )}
+                                <BranchNavigator message={msg} messagesMap={messagesMap} activePath={conversationPath} onNavigate={handleNavigateBranch} />
                             </Box>
                         );
                     })}
