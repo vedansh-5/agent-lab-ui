@@ -57,7 +57,7 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
     # Update parent if it exists
     if parent_message_id:
         parent_message_ref = messages_col_ref.document(parent_message_id)
-        batch.update(parent_message_ref, {"childMessageIds": firestore.ArrayUnion(user_message_id)})
+        batch.update(parent_message_ref, {"childMessageIds": firestore.ArrayUnion([user_message_id])})
 
         # Assistant's placeholder message
     assistant_message_ref = messages_col_ref.document()
