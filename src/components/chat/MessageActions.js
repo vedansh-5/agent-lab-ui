@@ -4,10 +4,12 @@ import { Box, Typography, IconButton, Tooltip } from '@mui/material';
 import CallSplitIcon from '@mui/icons-material/CallSplit';
 import ChevronLeft from '@mui/icons-material/ChevronLeft';
 import ChevronRight from '@mui/icons-material/ChevronRight';
+import DeveloperModeIcon from '@mui/icons-material/DeveloperMode';
 
-const MessageActions = ({ message, messagesMap, activePath, onNavigate, onFork, getChildrenForMessage, findLeafOfBranch }) => {
+const MessageActions = ({ message, messagesMap, activePath, onNavigate, onFork, onViewLog, getChildrenForMessage, findLeafOfBranch }) => {
     const children = getChildrenForMessage(messagesMap, message.id);
     const hasForks = children.length > 1;
+    const hasEvents = message.outputEvents && message.outputEvents.length > 0;
 
     // Find which of my children is in the active path
     const activeChild = hasForks ? children.find(child => activePath.some(pathMsg => pathMsg.id === child.id)) : null;
@@ -38,7 +40,14 @@ const MessageActions = ({ message, messagesMap, activePath, onNavigate, onFork, 
                     </Tooltip>
                 </Box>
             )}
-            <Box sx={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)' }}>
+            <Box sx={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)', display: 'flex', alignItems: 'center' }}>
+                {hasEvents && (
+                    <Tooltip title="View Agent Reasoning Log">
+                        <IconButton size="small" onClick={() => onViewLog(message.outputEvents)}>
+                            <DeveloperModeIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                )}
                 <Tooltip title="Create a new response from this point">
                     <IconButton size="small" onClick={() => onFork(message.id)}>
                         <CallSplitIcon fontSize="small" style={{ transform: "rotate(180deg)" }} />

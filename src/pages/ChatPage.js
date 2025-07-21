@@ -13,6 +13,7 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import ModelTrainingIcon from '@mui/icons-material/ModelTraining';
 import AddIcon from '@mui/icons-material/Add';
 import MessageActions from '../components/chat/MessageActions';
+import AgentReasoningLogDialog from '../components/agents/AgentReasoningLogDialog';
 
 // Helper for user-friendly participant display (user, agent, or model)
 const parseParticipant = (str, models, agents, users, currentUser) => {
@@ -82,12 +83,17 @@ const ChatPage = () => {
     const [sending, setSending] = useState(false);
     const [error, setError] = useState(null);
 
-    // Participants management: agents, models (selected for this chat)
+    // Participants management
     const [agents, setAgents] = useState([]);
     const [models, setModels] = useState([]);
-    const [replyAs, setReplyAs] = useState(null); // { type, id }
-    const [participants, setParticipants] = useState([]); // [{type, id, displayName, ...}]
+    const [replyAs, setReplyAs] = useState(null);
+    const [participants, setParticipants] = useState([]);
     const [addMenuAnchor, setAddMenuAnchor] = useState(null);
+
+    // Reasoning Log Dialog State
+    const [isReasoningLogOpen, setIsReasoningLogOpen] = useState(false);
+    const [selectedEventsForLog, setSelectedEventsForLog] = useState([]);
+
 
     const conversationPath = useMemo(() => {
         if (!messagesMap || !activeLeafMsgId) return [];
@@ -168,6 +174,15 @@ const ChatPage = () => {
         setActiveLeafMsgId(newLeafId);
     };
 
+    const handleOpenReasoningLog = (events) => {
+        setSelectedEventsForLog(events || []);
+        setIsReasoningLogOpen(true);
+    };
+
+    const handleCloseReasoningLog = () => {
+        setIsReasoningLogOpen(false);
+    };
+
     function handleOpenAddParticipantMenu(e) { setAddMenuAnchor(e.currentTarget); }
     function handleCloseAddParticipantMenu() { setAddMenuAnchor(null); }
     function handleAddParticipant(participant) {
@@ -241,6 +256,7 @@ const ChatPage = () => {
                                     activePath={conversationPath}
                                     onNavigate={handleNavigateBranch}
                                     onFork={handleFork}
+                                    onViewLog={handleOpenReasoningLog}
                                     getChildrenForMessage={getChildrenForMessage}
                                     findLeafOfBranch={findLeafOfBranch}
                                 />
@@ -296,6 +312,11 @@ const ChatPage = () => {
                     </Button>
                 </Box>
             </Paper>
+            <AgentReasoningLogDialog
+                open={isReasoningLogOpen}
+                onClose={handleCloseReasoningLog}
+                events={selectedEventsForLog}
+            />
         </Container>
     );
 }
