@@ -1,4 +1,4 @@
-// src/services/firebaseService.js  
+// src/services/firebaseService.js
 import { db } from '../firebaseConfig';
 import {
     collection,
@@ -24,6 +24,7 @@ export const createProject = async (userId, projectData) => {
         ...projectData,
         ownerId: userId,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
     });
     return docRef.id;
 };
@@ -43,6 +44,22 @@ export const getProjectDetails = async (projectId) => {
     } else {
         throw new Error("Project not found");
     }
+};
+
+export const updateProject = async (projectId, projectData) => {
+    const projectRef = doc(db, "projects", projectId);
+    await updateDoc(projectRef, {
+        ...projectData,
+        updatedAt: serverTimestamp(),
+    });
+};
+
+export const deleteProject = async (projectId) => {
+    // Note: This only deletes the project document itself. It does not cascade
+    // and remove associated agents, models, or chats. Their `projectIds`
+    // field will contain a reference to a now-deleted project.
+    const projectRef = doc(db, "projects", projectId);
+    await deleteDoc(projectRef);
 };
 
 
@@ -196,6 +213,33 @@ export const getChatDetails = async (chatId) => {
     }
 };
 
+export const updateChat = async (chatId, chatData) => {
+    const chatRef = doc(db, "chats", chatId);
+    await updateDoc(chatRef, {
+        ...chatData,
+        updatedAt: serverTimestamp(),
+    });
+};
+
+export const deleteChat = async (chatId) => {
+    const chatRef = doc(db, "chats", chatId);
+    const messagesRef = collection(db, "chats", chatId, "messages");
+
+    const batch = writeBatch(db);
+
+    // Get all messages and add delete operations to the batch
+    const messagesSnapshot = await getDocs(messagesRef);
+    messagesSnapshot.forEach((messageDoc) => {
+        batch.delete(messageDoc.ref);
+    });
+
+    // Add the chat document delete operation to the batch
+    batch.delete(chatRef);
+
+    // Commit the batch
+    await batch.commit();
+};
+
 export const addChatMessage = async (chatId, messageData) => {
     const chatRef = doc(db, "chats", chatId);
     const messagesColRef = collection(chatRef, "messages");
@@ -318,4 +362,4 @@ export const updateUserPermissions = async (targetUserId, permissionsData) => {
         console.error(`Error updating permissions for user ${targetUserId}:`, error);
         throw error;
     }
-};  
+};
