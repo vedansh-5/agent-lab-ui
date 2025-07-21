@@ -1,5 +1,5 @@
 // src/pages/ChatPage.js
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getChatDetails, listenToChatMessages, addChatMessage, getModelsForProjects, getAgentsForProjects } from '../services/firebaseService';
@@ -7,14 +7,12 @@ import { executeQuery } from '../services/agentService';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
 import { Container, Typography, Box, Paper, Button, IconButton, TextField, Menu, MenuItem, Select, InputLabel, FormControl, Tooltip, Chip, Avatar } from '@mui/material';
-import CallSplitIcon from '@mui/icons-material/CallSplit';
-import ChevronLeft from '@mui/icons-material/ChevronLeft';
-import ChevronRight from '@mui/icons-material/ChevronRight';
 import PersonIcon from '@mui/icons-material/Person';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import ModelTrainingIcon from '@mui/icons-material/ModelTraining';
 import AddIcon from '@mui/icons-material/Add';
+import MessageActions from '../components/chat/MessageActions';
 
 // Helper for user-friendly participant display (user, agent, or model)
 const parseParticipant = (str, models, agents, users, currentUser) => {
@@ -72,41 +70,6 @@ function findLeafOfBranch(messagesMap, branchRootId) {
     }
 }
 
-const BranchNavigator = ({ message, messagesMap, activePath, onNavigate }) => {
-    const children = getChildrenForMessage(messagesMap, message.id);
-    if (children.length <= 1) {
-        return null;
-    }
-
-    // Find which of my children is in the active path
-    const activeChild = children.find(child => activePath.some(pathMsg => pathMsg.id === child.id));
-    // Default to the latest fork if the active path doesn't contain any of the children
-    const activeIndex = activeChild ? children.indexOf(activeChild) : children.length - 1;
-
-    const handleNav = (direction) => {
-        let newIndex = activeIndex + direction;
-        if (newIndex < 0) newIndex = children.length - 1;
-        if (newIndex >= children.length) newIndex = 0;
-        const newBranchRootId = children[newIndex].id;
-        const newLeafId = findLeafOfBranch(messagesMap, newBranchRootId);
-        onNavigate(newLeafId);
-    };
-
-    return (
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 0.5, bgcolor: 'action.hover', borderRadius: 1, p: 0.2 }}>
-            <Tooltip title="Previous Fork">
-                <IconButton size="small" onClick={() => handleNav(-1)}><ChevronLeft /></IconButton>
-            </Tooltip>
-            <Typography variant="caption" sx={{ mx: 1, fontWeight: 'medium' }}>
-                Fork {activeIndex + 1} / {children.length}
-            </Typography>
-            <Tooltip title="Next Fork">
-                <IconButton size="small" onClick={() => handleNav(1)}><ChevronRight /></IconButton>
-            </Tooltip>
-        </Box>
-    );
-};
-
 const ChatPage = () => {
     const { currentUser } = useAuth();
     const { chatId } = useParams();
@@ -114,7 +77,6 @@ const ChatPage = () => {
     const [messages, setMessages] = useState([]); // Flat array
     const [messagesMap, setMessagesMap] = useState({}); // id -> msg
     const [activeLeafMsgId, setActiveLeafMsgId] = useState(null); // The last selected message ID
-    const [childIndices, setChildIndices] = useState({}); // msgId -> which child is selected of its children
     const [composerValue, setComposerValue] = useState('');
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
@@ -127,7 +89,6 @@ const ChatPage = () => {
     const [participants, setParticipants] = useState([]); // [{type, id, displayName, ...}]
     const [addMenuAnchor, setAddMenuAnchor] = useState(null);
 
-    // Child selection for branching/forking navigation
     const conversationPath = useMemo(() => {
         if (!messagesMap || !activeLeafMsgId) return [];
         return getPathToLeaf(messagesMap, activeLeafMsgId);
@@ -199,17 +160,14 @@ const ChatPage = () => {
         };
     }, [chatId]);
 
-    // Handler for clicking fork icon
     const handleFork = (msgId) => {
         setActiveLeafMsgId(msgId);
     }
 
-    // Handler to select different children if a node is a fork point
     const handleNavigateBranch = (newLeafId) => {
         setActiveLeafMsgId(newLeafId);
     };
 
-    // Handler for opening "Add" participant menu
     function handleOpenAddParticipantMenu(e) { setAddMenuAnchor(e.currentTarget); }
     function handleCloseAddParticipantMenu() { setAddMenuAnchor(null); }
     function handleAddParticipant(participant) {
@@ -217,7 +175,6 @@ const ChatPage = () => {
         setAddMenuAnchor(null);
     }
 
-    // Handler for sending a message (as agent/model)
     async function handleSendMessage(e) {
         e.preventDefault();
         if (!composerValue.trim() || !replyAs) return;
@@ -232,7 +189,6 @@ const ChatPage = () => {
                 parentMessageId: activeLeafMsgId
             });
             setComposerValue('');
-            // activeLeafMsgId will jump to new message due to listener
         } catch (err) {
             setError(err.message);
         } finally {
@@ -240,7 +196,6 @@ const ChatPage = () => {
         }
     }
 
-    // Helper to create all possible participant options for "Reply As" menu
     const replyAsOptions = useMemo(() => (
         participants.map(p => ({
             value: JSON.stringify({ type: p.type, id: p.id }),
@@ -256,48 +211,45 @@ const ChatPage = () => {
             <Paper sx={{ p: {xs: 2, md: 4} }}>
                 <Typography variant="h4" gutterBottom>{chat.title}</Typography>
 
-                {/* Render conversation chain */}
                 <Box sx={{ bgcolor: 'background.paper', borderRadius: 2, border: '1px solid', borderColor: 'divider', p: 2, minHeight: 320, overflowY: 'auto', maxHeight: '60vh' }}>
-                    {conversationPath.map((msg, idx) => {
+                    {conversationPath.map((msg) => {
                         const participant = parseParticipant(msg.participant, models, agents, [], currentUser);
-
                         return (
-                            <Box key={msg.id} sx={{ position: 'relative', mb: 2 }}>
+                            <Box key={msg.id} sx={{ position: 'relative', mb: 1 }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                                     {participant.icon}
                                     <Typography variant="subtitle2">{participant.label}</Typography>
-                                    <Tooltip title="Create a new response from this point">
-                                        <IconButton size="small" onClick={() => handleFork(msg.id)}>
-                                            <CallSplitIcon fontSize="small" style={{ transform: "rotate(180deg)" }} />
-                                        </IconButton>
-                                    </Tooltip>
                                 </Box>
                                 <Paper variant="outlined" sx={{ p: 1.5, wordBreak: 'break-word', whiteSpace: 'pre-wrap', mb: 0.5,
                                     bgcolor: msg.participant?.startsWith('user') ? 'primary.light' : msg.participant?.startsWith('agent') ? 'grey.100' : 'secondary.light' }}>
                                     <Typography variant="body1">{msg.content || <span style={{color: "grey"}}>(no content)</span>}</Typography>
-                                    {/* Loading spinner if this is an assistant message that is still running */}
-                                    {msg.run && msg.run.status === 'running' && (
+                                    {msg.run?.status === 'running' && (
                                         <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
                                             <LoadingSpinner small />
                                             <Typography variant="caption" sx={{ ml: 1 }}>Thinking...</Typography>
                                         </Box>
                                     )}
-                                    {/* Show error if present */}
-                                    {msg.run && msg.run.status === 'error' && Array.isArray(msg.run.queryErrorDetails) && msg.run.queryErrorDetails.length > 0 && (
+                                    {msg.run?.status === 'error' && Array.isArray(msg.run.queryErrorDetails) && msg.run.queryErrorDetails.length > 0 && (
                                         <Box sx={{mt: 1}}>
                                             <ErrorMessage message={msg.run.queryErrorDetails.join('\n')} severity="warning"/>
                                         </Box>
                                     )}
                                 </Paper>
-                                <BranchNavigator message={msg} messagesMap={messagesMap} activePath={conversationPath} onNavigate={handleNavigateBranch} />
+                                <MessageActions
+                                    message={msg}
+                                    messagesMap={messagesMap}
+                                    activePath={conversationPath}
+                                    onNavigate={handleNavigateBranch}
+                                    onFork={handleFork}
+                                    getChildrenForMessage={getChildrenForMessage}
+                                    findLeafOfBranch={findLeafOfBranch}
+                                />
                             </Box>
                         );
                     })}
                 </Box>
 
-                {/* Message composer */}
                 <Box component="form" onSubmit={handleSendMessage} sx={{ display: 'flex', alignItems: 'flex-end', mt: 2, gap: 1 }}>
-                    {/* "Reply As" dropdown */}
                     <FormControl sx={{ minWidth: 160 }}>
                         <InputLabel id="reply-as-label">Reply As</InputLabel>
                         <Select
@@ -311,7 +263,6 @@ const ChatPage = () => {
                             ))}
                         </Select>
                     </FormControl>
-                    {/* Add participant button (show agents/models not already in participants) */}
                     <Tooltip title="Add more agents or models">
                         <IconButton onClick={handleOpenAddParticipantMenu}><AddIcon /></IconButton>
                     </Tooltip>
