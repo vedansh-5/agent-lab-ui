@@ -11,6 +11,6 @@ from .vertex.management_logic import _delete_vertex_agent_logic, _check_vertex_a
 __all__ = [
     '_deploy_agent_to_vertex_logic',
     '_delete_vertex_agent_logic',
-    'query_deployed_agent_orchestrator_logic', # Renamed export for clarity if needed, or keep original name
+    'query_deployed_agent_orchestrator_logic',
     '_check_vertex_agent_deployment_status_logic'
 ]  

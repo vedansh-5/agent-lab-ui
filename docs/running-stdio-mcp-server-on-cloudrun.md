@@ -29,13 +29,13 @@ The [MCP server](https://docs.pinecone.io/guides/operations/mcp-server) from Pin
 Below is an example command to deploy to Google Cloud Run:
 
 ```bash
-gcloud run deploy pinecone-mcp-server \
+gcloud run deploy maps-mcp-server \
 --platform=managed \
 --allow-unauthenticated \
 --region=us-central1 \
 --image docker.io/supercorp/supergateway \
---args="--stdio","npx -y @pinecone-database/mcp","--outputTransport","streamableHttp","--port","8080","--cors","--baseUrl","http://0.0.0.0:8080","--healthEndpoint","/healthz" \
---set-env-vars "PINECONE_API_KEY=<YOUR_API_KEY>"
+--args="--stdio","npx -y @modelcontextprotocol/server-google-maps","--outputTransport","streamableHttp","--port","8080","--cors","--baseUrl","http://0.0.0.0:8080","--healthEndpoint","/healthz" \
+--set-env-vars "GOOGLE_MAPS_API_KEY=AIzaSyCX7Ae3Csa1RBvGrJEzXl9r8LRg-CksuUY"
 ```
 
 ### Explanation

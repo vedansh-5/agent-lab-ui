@@ -3,7 +3,7 @@ import { createCallable } from '../firebaseConfig';
 
 const getGofannonToolManifestCallable = createCallable('get_gofannon_tool_manifest');
 const deployAgentToVertexCallable = createCallable('deploy_agent_to_vertex');
-const queryDeployedAgentCallable = createCallable('query_deployed_agent');
+const executeQueryCallable = createCallable('executeQuery'); // Renamed
 const deleteVertexAgentCallable = createCallable('delete_vertex_agent');
 const checkVertexAgentDeploymentStatusCallable = createCallable('check_vertex_agent_deployment_status');
 const listMcpServerToolsCallable = createCallable('list_mcp_server_tools');
@@ -72,19 +72,23 @@ export const deployAgent = async (agentConfig, agentDocId) => {
     }
 };
 
-export const queryAgent = async (resourceName, message, userId, sessionId, agentDocId, stuffedContextItems = null) => {
+// This function now handles querying agents OR models
+export const executeQuery = async ({ agentId, modelId, message, adkUserId, chatId, parentMessageId, stuffedContextItems = null }) => {
     try {
         const payload = {
-            resourceName,
+            agentId, // Can be null
+            modelId, // Can be null
             message,
-            adkUserId: userId,
-            sessionId,
-            agentDocId
+            adkUserId,
+            chatId,
+            parentMessageId,
+            stuffedContextItems
         };
-        const result = await queryDeployedAgentCallable(payload);
+        // This cloud function now returns the new messageId immediately
+        const result = await executeQueryCallable(payload);
         return result.data;
     } catch (error) {
-        console.error("Error querying agent:", error);
+        console.error("Error executing query:", error);
         throw error;
     }
 };
@@ -107,4 +111,4 @@ export const checkAgentDeploymentStatus = async (agentDocId) => {
         console.error("Error checking agent deployment status:", error);
         throw error;
     }
-};
+};  

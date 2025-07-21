@@ -11,7 +11,7 @@ import asyncio # For running async logic from mcp_handler
 from handlers.vertex_agent_handler import (
     _deploy_agent_to_vertex_logic,
     _delete_vertex_agent_logic,
-    query_deployed_agent_orchestrator_logic as _query_deployed_agent_logic,
+    query_deployed_agent_orchestrator_logic as _execute_query_logic, # Renamed import
     _check_vertex_agent_deployment_status_logic
 )
 from handlers.vertex.task_handler import run_agent_task_wrapper
@@ -48,12 +48,12 @@ def delete_vertex_agent(req: https_fn.CallableRequest):
     return _delete_vertex_agent_logic(req)
 
 
-@https_fn.on_call(memory=options.MemoryOption.GB_2, timeout_sec=180, cpu=1)
+@https_fn.on_call(memory=options.MemoryOption.GB_1, timeout_sec=180) # This is now a fast dispatcher
 @handle_exceptions_and_log
-def query_deployed_agent(req: https_fn.CallableRequest):
+def executeQuery(req: https_fn.CallableRequest): # Renamed from query_deployed_agent
     if not req.auth:
-        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required to query agents.")
-    return _query_deployed_agent_logic(req)
+        raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.UNAUTHENTICATED, message="Authentication required to query.")
+    return _execute_query_logic(req)
 
 
 @https_fn.on_call(memory=options.MemoryOption.GB_1)
@@ -85,14 +85,13 @@ def list_mcp_server_tools(req: https_fn.CallableRequest):
     # _list_mcp_server_tools_logic_async is async, so we need to run it in an event loop
     return asyncio.run(_list_mcp_server_tools_logic_async(req))
 
+# Task handler for executing queries in the background
 @tasks_fn.on_task_dispatched(
-        # queue="agent-lab-run-queue", # Use your queue name
-        rate_limits=RateLimits(max_concurrent_dispatches=10),
-        retry_config=RetryConfig(max_attempts=3, min_backoff_seconds=10),
-        timeout_sec=540,
-        memory=options.MemoryOption.GB_2,
-        cpu=1
-
+    rate_limits=RateLimits(max_concurrent_dispatches=10),
+    retry_config=RetryConfig(max_attempts=3, min_backoff_seconds=10),
+    timeout_sec=540,
+    memory=options.MemoryOption.GB_2,
+    cpu=1
 )
 def executeAgentRunTask(req: tasks_fn.CallableRequest):
     """Background worker function triggered by Cloud Tasks."""
