@@ -15,6 +15,12 @@ import AddIcon from '@mui/icons-material/Add';
 import MessageActions from '../components/chat/MessageActions';
 import AgentReasoningLogDialog from '../components/agents/AgentReasoningLogDialog';
 
+// Markdown Imports
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { muiMarkdownComponentsConfig } from '../components/common/MuiMarkdownComponents';
+
+
 // Helper for user-friendly participant display (user, agent, or model)
 const parseParticipant = (str, models, agents, users, currentUser) => {
     if (!str) return { label: 'Unknown', icon: <PersonIcon /> };
@@ -237,7 +243,13 @@ const ChatPage = () => {
                                 </Box>
                                 <Paper variant="outlined" sx={{ p: 1.5, wordBreak: 'break-word', whiteSpace: 'pre-wrap', mb: 0.5,
                                     bgcolor: msg.participant?.startsWith('user') ? 'primary.light' : msg.participant?.startsWith('agent') ? 'grey.100' : 'secondary.light' }}>
-                                    <Typography variant="body1">{msg.content || <span style={{color: "grey"}}>(no content)</span>}</Typography>
+                                    {msg.content ? (
+                                        <ReactMarkdown components={muiMarkdownComponentsConfig} remarkPlugins={[remarkGfm]}>
+                                            {msg.content}
+                                        </ReactMarkdown>
+                                    ) : (
+                                        <Typography variant="body1" sx={{ color: "text.secondary" }}>(no content)</Typography>
+                                    )}
                                     {msg.run?.status === 'running' && (
                                         <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
                                             <LoadingSpinner small />
