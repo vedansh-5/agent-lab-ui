@@ -23,7 +23,6 @@ import { Box, Container, Typography, Link as MuiLink } from '@mui/material';
 import PlatformUnderConstructionPage from "./pages/PlatformUnderConstructionPage";
 import AboutPage from "./pages/AboutPage";
 
-// New Pages
 import ProjectsPage from './pages/ProjectsPage';
 import CreateProjectPage from './pages/CreateProjectPage';
 import ProjectDetailsPage from './pages/ProjectDetailsPage';
@@ -31,6 +30,7 @@ import ModelsPage from './pages/ModelsPage';
 import CreateModelPage from './pages/CreateModelPage';
 import ModelDetailsPage from './pages/ModelDetailsPage';
 import ChatPage from './pages/ChatPage';
+import ToolsPage from './pages/ToolsPage';
 
 // Helper function to update meta tags
 const updateMetaTagContent = (metaId, content) => {
@@ -134,6 +134,8 @@ function AppContent() {
                     <Route path="/create-model" element={<ProtectedRoute><CreateModelPage /></ProtectedRoute>} />
                     <Route path="/model/:modelId" element={<ProtectedRoute><ModelDetailsPage /></ProtectedRoute>} />
                     <Route path="/model/:modelId/edit" element={<ProtectedRoute><CreateModelPage isEditMode={true} /></ProtectedRoute>} />
+
+                    <Route path="/tools" element={<ProtectedRoute><ToolsPage /></ProtectedRoute>} />
 
                     <Route path="/agents" element={<ProtectedRoute><AgentsPage /></ProtectedRoute>} />
                     <Route path="/create-agent" element={<ProtectedRoute><CreateAgentPage /></ProtectedRoute>} />
