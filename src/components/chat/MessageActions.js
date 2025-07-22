@@ -1,4 +1,5 @@
 // src/components/chat/MessageActions.js
+// src/components/chat/MessageActions.js
 import React from 'react';
 import { Box, Typography, IconButton, Tooltip } from '@mui/material';
 import CallSplitIcon from '@mui/icons-material/CallSplit';
@@ -10,6 +11,7 @@ const MessageActions = ({ message, messagesMap, activePath, onNavigate, onFork, 
     const children = getChildrenForMessage(messagesMap, message.id);
     const hasForks = children.length > 1;
     const hasEvents = message.outputEvents && message.outputEvents.length > 0;
+    const isContextMessage = message.participant === 'context_stuffed';
 
     // Find which of my children is in the active path
     const activeChild = hasForks ? children.find(child => activePath.some(pathMsg => pathMsg.id === child.id)) : null;
@@ -26,7 +28,7 @@ const MessageActions = ({ message, messagesMap, activePath, onNavigate, onFork, 
     };
 
     return (
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 0.5, height: '34px', position: 'relative' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: isContextMessage ? 'flex-end' : 'center', mt: 0.5, height: '34px', position: 'relative' }}>
             {hasForks && (
                 <Box sx={{ display: 'flex', alignItems: 'center', bgcolor: 'action.hover', borderRadius: 1, p: 0.2 }}>
                     <Tooltip title="Previous Fork">
@@ -40,7 +42,7 @@ const MessageActions = ({ message, messagesMap, activePath, onNavigate, onFork, 
                     </Tooltip>
                 </Box>
             )}
-            <Box sx={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)', display: 'flex', alignItems: 'center' }}>
+            <Box sx={{ position: isContextMessage ? 'static' : 'absolute', right: 0, top: '50%', transform: isContextMessage ? 'none' : 'translateY(-50%)', display: 'flex', alignItems: 'center' }}>
                 {hasEvents && (
                     <Tooltip title="View Agent Reasoning Log">
                         <IconButton size="small" onClick={() => onViewLog(message.outputEvents)}>

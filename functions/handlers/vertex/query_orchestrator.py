@@ -28,7 +28,8 @@ def query_deployed_agent_orchestrator_logic(req: https_fn.CallableRequest):
     parent_message_id = data.get("parentMessageId") # Can be null
     firebase_auth_uid = req.auth.uid if req.auth else "unknown_firebase_auth_uid"
 
-    if not chat_id or not adk_user_id or not message_text:
+    if not chat_id or not adk_user_id:
+        logger.log("chatId: {}, adkUserId: {}, message: {}".format(chat_id, adk_user_id, message_text))
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="chatId, adkUserId, and message are required.")
     if not agent_id and not model_id:
         raise https_fn.HttpsError(code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT, message="Either agentId or modelId must be provided.")
