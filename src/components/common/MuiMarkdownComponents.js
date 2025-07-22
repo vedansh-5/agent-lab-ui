@@ -5,7 +5,6 @@ import { useTheme } from '@mui/material/styles';
 
 // Syntax Highlighting Imports
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { darcula } from 'react-syntax-highlighter/dist/esm/styles/prism';
 // Choose your themes. vscDarkPlus is great for dark mode, prism is a clean light theme.
 import { vscDarkPlus, prism } from 'react-syntax-highlighter/dist/esm/styles/prism';
 

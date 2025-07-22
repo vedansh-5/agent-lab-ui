@@ -21,7 +21,7 @@ import InfoIcon from "@mui/icons-material/Info";
 
 const Navbar = () => {
     const { currentUser, logout } = useAuth();
-    const { selectTheme, currentThemeKey } = useThemeSwitcher();
+    const { selectTheme } = useThemeSwitcher();
     const navigate = useNavigate();
     const location = useLocation();
     const muiTheme = useTheme();

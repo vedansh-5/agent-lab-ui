@@ -11,7 +11,7 @@ import ErrorMessage from '../components/common/ErrorMessage';
 import {
     Container, Typography, Box, Paper, Tabs, Tab, Button,
     List, ListItemText, ListItemButton, Dialog, DialogTitle, DialogContent, TextField, DialogActions,
-    ListItem, ListItemSecondaryAction, IconButton, Tooltip, CircularProgress
+    ListItem, IconButton, Tooltip, CircularProgress
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import ChatIcon from '@mui/icons-material/Chat';

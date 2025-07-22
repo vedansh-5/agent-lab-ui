@@ -36,6 +36,7 @@ const ModelForm = ({ onSubmit, initialData = {}, isSaving = false }) => {
         } else {
             setModelString(''); // For custom providers
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [provider]);
 
     const handleSubmit = (e) => {

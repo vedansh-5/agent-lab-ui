@@ -1,184 +1,252 @@
-// src/pages/AgentPage.js
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, Link as RouterLink, useNavigate } from 'react-router-dom';
+// src/pages/AgentsPage.js
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { getAgentDetails, getModelDetails, updateAgentInFirestore, createAgentInFirestore } from '../services/firebaseService';
-import { deployAgent, deleteAgentDeployment, checkAgentDeploymentStatus } from '../services/agentService';
-
+import { getMyAgents, getPublicAgents, deleteAgentFromFirestore, createAgentInFirestore } from '../services/firebaseService';
+import { deleteAgentDeployment } from '../services/agentService';
+import AgentList from '../components/agents/AgentList';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
-import AgentDetailsDisplay from '../components/agents/AgentDetailsDisplay';
-import ChildAgentsDisplay from '../components/agents/ChildAgentsDisplay';
-import DeploymentControls from '../components/agents/DeploymentControls';
+import PlatformSelectionDialog from '../components/agents/PlatformSelectionDialog';
+import { PLATFORM_IDS } from '../constants/platformConstants';
 
 import {
-    Container, Typography, Box, Paper, Grid, Button, Divider, Chip,
-    FormControlLabel, Switch, Tooltip
+    Box, Typography, Button, Container, Paper, CircularProgress, Fab,
+    ButtonGroup, ClickAwayListener, Grow, Popper, MenuList, MenuItem as MuiMenuItem, Divider
 } from '@mui/material';
-import EditIcon from '@mui/icons-material/Edit';
-import FileCopyIcon from '@mui/icons-material/FileCopy';
-import DownloadIcon from '@mui/icons-material/Download';
-import PublicIcon from '@mui/icons-material/Public';
-import LockIcon from '@mui/icons-material/Lock';
-import ChatIcon from '@mui/icons-material/Chat';
+import AddIcon from '@mui/icons-material/Add';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
+import FileUploadIcon from '@mui/icons-material/FileUpload';
+import NoteAddIcon from '@mui/icons-material/NoteAdd';
 
-import { PLATFORM_IDS, getPlatformById } from '../constants/platformConstants';
 
-const AgentPage = () => {
-    const { agentId } = useParams();
+const AgentsPage = () => {
     const { currentUser } = useAuth();
     const navigate = useNavigate();
-
-    const [agent, setAgent] = useState(null);
-    const [model, setModel] = useState(null); // State for the associated model
+    const [myAgents, setMyAgents] = useState([]);
+    const [publicAgents, setPublicAgents] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [deletingAgentId, setDeletingAgentId] = useState(null);
     const [error, setError] = useState(null);
-    const [isDeploying, setIsDeploying] = useState(false);
-    const [isDeleting, setIsDeleting] = useState(false);
-    const [isCheckingStatus, setIsCheckingStatus] = useState(false);
-    const [pollingIntervalId, setPollingIntervalId] = useState(null);
-    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isPlatformDialogOpen, setIsPlatformDialogOpen] = useState(false);
 
-    const agentIdRef = useRef(agentId);
-    useEffect(() => { agentIdRef.current = agentId; }, [agentId]);
+    const [openSplitButton, setOpenSplitButton] = useState(false);
+    const anchorRefSplitButton = useRef(null);
+    const fileInputRef = useRef(null);
 
-    const stopPolling = useCallback(() => {
-        if (pollingIntervalId) {
-            clearInterval(pollingIntervalId);
-            setPollingIntervalId(null);
-        }
-    }, [pollingIntervalId]);
-
-    const fetchAgentData = useCallback(async (isPoll = false) => {
-        if (!currentUser || !agentIdRef.current) return;
-        if (!isPoll) setLoading(true);
-
-        try {
-            const agentData = await getAgentDetails(agentIdRef.current);
-            if (!agentData) {
-                setError("Agent not found.");
-                setAgent(null);
-                setModel(null);
-                stopPolling();
-                return;
-            }
-            setAgent(agentData);
-            setError(null);
-
-            // Fetch associated model if the agent has one
-            if (agentData.modelId) {
-                try {
-                    const modelData = await getModelDetails(agentData.modelId);
-                    setModel(modelData);
-                } catch (modelErr) {
-                    console.error("Error fetching model details:", modelErr);
-                    setModel(null); // Set model to null if it can't be fetched
-                    setError(prev => prev ? `${prev}\nCould not load associated model.` : 'Could not load associated model.');
-                }
-            } else {
-                setModel(null);
-            }
-
-            const status = agentData.deploymentStatus;
-            if (status === 'deploying_initiated' || status === 'deploying_in_progress') {
-                if (!pollingIntervalId && !isPoll) {
-                    const newIntervalId = setInterval(async () => {
-                        if (document.visibilityState === 'visible') {
-                            await checkAgentDeploymentStatus(agentIdRef.current);
-                            await fetchAgentData(true);
-                        }
-                    }, 30000);
-                    setPollingIntervalId(newIntervalId);
-                }
-            } else {
-                stopPolling();
-            }
-        } catch (err) {
-            console.error("Error fetching agent details:", err);
-            if (!isPoll) setError(`Failed to load agent details: ${err.message}`);
-            stopPolling();
-        } finally {
-            if (!isPoll) setLoading(false);
-        }
-    }, [currentUser, pollingIntervalId, stopPolling]);
 
     useEffect(() => {
-        fetchAgentData();
-        return () => stopPolling();
-    }, [fetchAgentData, stopPolling]);
+        if (currentUser) {
+            const fetchAgents = async () => {
+                try {
+                    setLoading(true);
+                    setError(null);
+                    const [userAgentsData, publicAgentsData] = await Promise.all([
+                        getMyAgents(currentUser.uid),
+                        getPublicAgents(currentUser.uid)
+                    ]);
+                    setMyAgents(userAgentsData);
+                    setPublicAgents(publicAgentsData);
+                } catch (err) {
+                    console.error("Error fetching agents:", err);
+                    setError("Failed to load agents. Please try again.");
+                } finally {
+                    setLoading(false);
+                }
+            };
+            fetchAgents();
+        }
+    }, [currentUser]);
+
+    const handleDeleteAgentConfig = async (agentToDelete) => {
+        if (!agentToDelete || !agentToDelete.id) return;
+        if (!currentUser || (agentToDelete.userId !== currentUser.uid && !currentUser.permissions?.isAdmin)) {
+            alert("You are not authorized to delete this agent.");
+            return;
+        }
+
+        if (window.confirm(`Are you sure you want to delete the agent configuration "${agentToDelete.name}"? This will also attempt to remove any associated (non-active/error) Vertex AI deployment if present. This action cannot be undone.`)) {
+            setDeletingAgentId(agentToDelete.id);
+            setError(null);
+            try {
+                if (agentToDelete.vertexAiResourceName &&
+                    !['deployed', 'deploying_initiated', 'deploying_in_progress'].includes(agentToDelete.deploymentStatus)) {
+                    try {
+                        await deleteAgentDeployment(agentToDelete.vertexAiResourceName, agentToDelete.id);
+                    } catch (vertexDeleteError) {
+                        console.warn(`Could not delete Vertex AI deployment ${agentToDelete.vertexAiResourceName}:`, vertexDeleteError);
+                    }
+                }
+                await deleteAgentFromFirestore(agentToDelete.id);
+                setMyAgents(prevAgents => prevAgents.filter(agent => agent.id !== agentToDelete.id));
+                setPublicAgents(prevAgents => prevAgents.filter(agent => agent.id !== agentToDelete.id));
+            } catch (err) {
+                console.error("Error deleting agent config:", err);
+                setError(`Failed to delete agent configuration "${agentToDelete.name}": ${err.message}`);
+            } finally {
+                setDeletingAgentId(null);
+            }
+        }
+    };
+
+    const handleOpenPlatformDialog = () => setIsPlatformDialogOpen(true);
+    const handleClosePlatformDialog = () => setIsPlatformDialogOpen(false);
+
+    const handlePlatformSelected = (platform) => {
+        setIsPlatformDialogOpen(false);
+        if (platform.id === PLATFORM_IDS.GOOGLE_VERTEX) {
+            navigate('/create-agent', { state: { platformId: platform.id } });
+        } else if (!platform.isConstructed) {
+            navigate(`/platform-under-construction/${platform.id}`);
+        }
+    };
+
+    const handleSplitButtonToggle = () => setOpenSplitButton((prevOpen) => !prevOpen);
+    const handleSplitButtonClose = (event) => {
+        if (anchorRefSplitButton.current && anchorRefSplitButton.current.contains(event.target)) {
+            return;
+        }
+        setOpenSplitButton(false);
+    };
+
+    const handleImportMenuItemClick = () => {
+        fileInputRef.current.click();
+        setOpenSplitButton(false);
+    };
+
+    const handleCreateBlankMenuItemClick = () => {
+        handleOpenPlatformDialog();
+        setOpenSplitButton(false);
+    }
+
+    const handleFileImport = async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        setError(null);
+        setLoading(true);
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const importedData = JSON.parse(e.target.result);
+
+                if (!importedData.name || !importedData.agentType || !importedData.modelId) {
+                    throw new Error("Imported JSON is missing required fields (name, agentType, modelId).");
+                }
+
+                const agentDataForFirestore = { ...importedData };
+                // Clean up fields that should not be imported
+                const fieldsToDelete = ['id', 'userId', 'isPublic', 'createdAt', 'updatedAt', 'deploymentStatus', 'vertexAiResourceName', 'lastDeployedAt', 'lastDeploymentAttemptAt', 'deploymentError', 'litellm_api_key'];
+                fieldsToDelete.forEach(field => delete agentDataForFirestore[field]);
+
+                const newAgentId = await createAgentInFirestore(currentUser.uid, agentDataForFirestore, true);
+                alert(`Agent "${agentDataForFirestore.name}" imported successfully!`);
+                navigate(`/agent/${newAgentId}/edit`);
+            } catch (parseError) {
+                console.error("Error importing agent:", parseError);
+                setError(`Failed to import agent: ${parseError.message}`);
+            } finally {
+                setLoading(false);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+            }
+        };
+        reader.readAsText(file);
+    };
 
 
-    const handleManualStatusRefresh = async () => { /* ... unchanged ... */ };
-    const handleDeploy = async () => { /* ... unchanged ... */ };
-    const handleDeleteDeployment = async () => { /* ... unchanged ... */ };
-    const handleTogglePublic = async () => { /* ... unchanged ... */ };
-    const handleCloneAgent = async () => { /* ... unchanged ... */ };
-    const handleExportAgent = async () => { /* ... unchanged ... */ };
-
-    if (loading && !agent) return <Box display="flex" justifyContent="center" py={5}><LoadingSpinner /></Box>;
-    if (error && !agent) return <Container><ErrorMessage message={error} /></Container>;
-    if (!agent) return <Container><Typography>Agent data not available.</Typography></Container>;
-
-    const isOwner = currentUser && agent && currentUser.uid === agent.userId;
-    const isAdmin = currentUser && currentUser.permissions?.isAdmin;
-    const canManageAgent = isOwner || isAdmin;
-    const platformInfo = agent.platform ? getPlatformById(agent.platform) : null;
+    if (loading && myAgents.length === 0 && publicAgents.length === 0) return <Box display="flex" justifyContent="center" py={5}><LoadingSpinner /></Box>;
 
     return (
-        <Container maxWidth="lg" sx={{ py: 3 }}>
-            {error && <ErrorMessage message={error} severity="warning" sx={{ mb: 2 }} />}
-            <Paper elevation={3} sx={{ p: { xs: 2, md: 3 }, mb: 3 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', mb: 2 }}>
-                    <Box sx={{mb: {xs: 2, sm: 0}}}>
-                        <Typography variant="h4" component="h1" gutterBottom>
-                            {agent.name}
-                            <Chip label={agent.agentType} size="small" color="secondary" variant="outlined" sx={{ ml: 1, verticalAlign: 'middle' }} />
-                        </Typography>
-                        {/* More header info... */}
-                    </Box>
-                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                        {agent.projectIds?.[0] && (
-                            <Button variant="contained" color="primary" component={RouterLink} to={`/project/${agent.projectIds[0]}`} startIcon={<ChatIcon />}>
-                                Go to Project Chats
-                            </Button>
-                        )}
-                        {canManageAgent && (
-                            <Button variant="outlined" color="secondary" component={RouterLink} to={`/agent/${agent.id}/edit`} startIcon={<EditIcon />}>
-                                Edit
-                            </Button>
-                        )}
-                    </Box>
-                </Box>
+        <Container maxWidth="lg">
+            <input
+                type="file"
+                accept=".json"
+                ref={fileInputRef}
+                onChange={handleFileImport}
+                style={{ display: 'none' }}
+            />
+            <Fab
+                color="primary"
+                aria-label="add agent"
+                onClick={handleCreateBlankMenuItemClick}
+                sx={{
+                    position: 'fixed',
+                    bottom: (theme) => theme.spacing(3),
+                    right: (theme) => theme.spacing(3),
+                    display: { xs: 'flex', md: 'none' }
+                }}
+            >
+                <AddIcon />
+            </Fab>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                <Typography variant="h4" component="h1">
+                    Agents
+                </Typography>
+                <ButtonGroup variant="contained" ref={anchorRefSplitButton}>
+                    <Button onClick={handleCreateBlankMenuItemClick} startIcon={<NoteAddIcon />}>Create Agent</Button>
+                    <Button
+                        size="small"
+                        aria-controls={openSplitButton ? 'split-button-menu' : undefined}
+                        aria-expanded={openSplitButton ? 'true' : undefined}
+                        onClick={handleSplitButtonToggle}
+                    >
+                        <ArrowDropDownIcon />
+                    </Button>
+                </ButtonGroup>
+                <Popper open={openSplitButton} anchorEl={anchorRefSplitButton.current} role={undefined} transition disablePortal placement="bottom-end" sx={{zIndex: 1}} >
+                    {({ TransitionProps, placement }) => (
+                        <Grow {...TransitionProps} style={{ transformOrigin: placement === 'bottom-end' ? 'right top' : 'right bottom' }} >
+                            <Paper>
+                                <ClickAwayListener onClickAway={handleSplitButtonClose}>
+                                    <MenuList id="split-button-menu">
+                                        <MuiMenuItem onClick={handleImportMenuItemClick}>
+                                            <FileUploadIcon sx={{mr:1}} fontSize="small"/> Import Agent
+                                        </MuiMenuItem>
+                                    </MenuList>
+                                </ClickAwayListener>
+                            </Paper>
+                        </Grow>
+                    )}
+                </Popper>
+            </Box>
 
-                {/* Other agent controls like clone, export, public toggle... */}
-                <Divider sx={{ my: 2 }} />
-                <Grid container spacing={3}>
-                    <Grid item xs={12}>
-                        <AgentDetailsDisplay agent={agent} model={model} />
-                    </Grid>
-                </Grid>
-                <ChildAgentsDisplay agent={agent} />
-                {agent.platform === PLATFORM_IDS.GOOGLE_VERTEX && (
-                    <>
-                        <Divider sx={{ my: 3 }} />
-                        <DeploymentControls
-                            agent={agent}
-                            isDeploying={isDeploying}
-                            isDeleting={isDeleting}
-                            isCheckingStatus={isCheckingStatus}
-                            pollingIntervalId={pollingIntervalId}
-                            onDeploy={handleDeploy}
-                            onDeleteDeployment={handleDeleteDeployment}
-                            onManualStatusRefresh={handleManualStatusRefresh}
-                            isLoadingPage={loading}
-                        />
-                    </>
-                )}
-            </Paper>
+            {error && <ErrorMessage message={error} />}
+            {deletingAgentId && <Box sx={{display: 'flex', alignItems: 'center', justifyContent: 'center', my: 2}}><CircularProgress size={20} sx={{mr:1}} /> <Typography>Deleting agent...</Typography></Box>}
 
-            {/* AgentRunner is REMOVED. RunHistory can be kept for legacy data viewing if desired, or removed. */}
+            <Typography variant="h5" component="h2" gutterBottom sx={{mt: 3}}>
+                Your Agents
+            </Typography>
+            {myAgents.length > 0 ? (
+                <AgentList agents={myAgents} onDeleteAgentConfig={handleDeleteAgentConfig} />
+            ) : (
+                !error && !loading && (
+                    <Paper elevation={0} sx={{ p:3, textAlign: 'center', backgroundColor: 'action.hover' }}>
+                        <Typography color="text.secondary">You haven't created any agents yet.</Typography>
+                    </Paper>
+                )
+            )}
+
+            <Divider sx={{ my: 4 }} />
+
+            <Typography variant="h5" component="h2" gutterBottom>
+                Public Agents
+            </Typography>
+            {publicAgents.length > 0 ? (
+                <AgentList agents={publicAgents} onDeleteAgentConfig={handleDeleteAgentConfig} />
+            ) : (
+                !error && !loading && (
+                    <Paper elevation={0} sx={{ p:3, textAlign: 'center', backgroundColor: 'action.hover' }}>
+                        <Typography color="text.secondary">No public agents available currently.</Typography>
+                    </Paper>
+                )
+            )}
+            <PlatformSelectionDialog
+                open={isPlatformDialogOpen}
+                onClose={handleClosePlatformDialog}
+                onSelectPlatform={handlePlatformSelected}
+            />
         </Container>
     );
 };
 
-export default AgentPage;
+export default AgentsPage;

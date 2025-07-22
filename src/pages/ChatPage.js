@@ -1,5 +1,5 @@
 // src/pages/ChatPage.js
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getChatDetails, listenToChatMessages, addChatMessage, getModelsForProjects, getAgentsForProjects } from '../services/firebaseService';
@@ -12,11 +12,9 @@ import {
     Box,
     Paper,
     Button,
-    IconButton,
     TextField,
     Menu,
     MenuItem,
-    Tooltip,
     Avatar,
     ButtonGroup,
     ListSubheader,

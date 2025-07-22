@@ -7,14 +7,14 @@ import { deleteAgentDeployment } from '../services/agentService';
 import AgentList from '../components/agents/AgentList';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
-// import PlatformSelectionDialog from '../components/agents/PlatformSelectionDialog';
+import PlatformSelectionDialog from '../components/agents/PlatformSelectionDialog';
 import { PLATFORM_IDS } from '../constants/platformConstants';
 
 import {
-    Box, Typography, Button, Container, Paper, CircularProgress,
+    Box, Typography, Button, Container, Paper, CircularProgress, Fab,
     ButtonGroup, ClickAwayListener, Grow, Popper, MenuList, MenuItem as MuiMenuItem, Divider
 } from '@mui/material';
-// import AddIcon from '@mui/icons-material/Add';
+import AddIcon from '@mui/icons-material/Add';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import NoteAddIcon from '@mui/icons-material/NoteAdd';
@@ -115,7 +115,7 @@ const AgentsPage = () => {
     };
 
     const handleCreateBlankMenuItemClick = () => {
-        navigate('/create-agent');
+        handleOpenPlatformDialog();
         setOpenSplitButton(false);
     }
 
@@ -165,6 +165,19 @@ const AgentsPage = () => {
                 onChange={handleFileImport}
                 style={{ display: 'none' }}
             />
+            <Fab
+                color="primary"
+                aria-label="add agent"
+                onClick={handleCreateBlankMenuItemClick}
+                sx={{
+                    position: 'fixed',
+                    bottom: (theme) => theme.spacing(3),
+                    right: (theme) => theme.spacing(3),
+                    display: { xs: 'flex', md: 'none' }
+                }}
+            >
+                <AddIcon />
+            </Fab>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                 <Typography variant="h4" component="h1">
                     Agents
@@ -227,6 +240,11 @@ const AgentsPage = () => {
                     </Paper>
                 )
             )}
+            <PlatformSelectionDialog
+                open={isPlatformDialogOpen}
+                onClose={handleClosePlatformDialog}
+                onSelectPlatform={handlePlatformSelected}
+            />
         </Container>
     );
 };
