@@ -321,7 +321,7 @@ const ProjectDetailsPage = () => {
                 <TabPanel value={tabValue} index={1}>
                     <List>
                         {agents.map(agent => (
-                            <ListItemButton key={agent.id} component={RouterLink} to={`/agent/${agent.id}`}>
+                            <ListItemButton key={agent.id} component={RouterLink} to={`/agent/${agent.id}/edit`}>
                                 <ListItemText primary={agent.name} secondary={agent.description} />
                             </ListItemButton>
                         ))}
@@ -383,4 +383,4 @@ const ProjectDetailsPage = () => {
     );
 };
 
-export default ProjectDetailsPage;  
+export default ProjectDetailsPage;
