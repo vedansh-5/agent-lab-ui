@@ -67,4 +67,4 @@ class SmolAgentExecutor(AgentExecutor):
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         # Smol-agent execution is synchronous within its steps, so cancellation is not straightforward.
         # This is a placeholder for a more advanced implementation.
-        raise ServerError(error=UnsupportedOperationError(message="Cancellation is not supported for this agent."))  
+        raise ServerError(error=UnsupportedOperationError(message="Cancellation is not supported for this agent."))

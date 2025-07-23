@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 # This function creates and configures the main ASGI application
 def create_app():
     """Creates and configures the A2A Starlette application."""
-    if not os.getenv("GEMINI_API_KEY"):
-        logger.warning("GEMINI_API_KEY environment variable not set. The agent may not function correctly.")
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.warning("OPENAI_API_KEY environment variable not set. The agent may not function correctly.")
 
         # Determine host and port from environment variables, essential for Cloud Run
     host = os.getenv("HOST", "0.0.0.0")
@@ -84,6 +84,6 @@ def cli(host: str, port: int):
 
 # This block allows running `uv run .` for local development
 if __name__ == "__main__":
-    # this ensures that `main()` runs when using `uv run .`
+    # this ensures that `cli()` runs when using `uv run .`
     if not hasattr(sys, '_called_from_uvicorn'):
         cli()  

@@ -1,6 +1,6 @@
 # Smol Agent on Google Cloud Run with A2A
 
-This sample demonstrates how to wrap an agent from the [smol-agent](https://github.com/smol-ai/developer) framework, serve it using the A2A protocol, and deploy it to Google Cloud Run.
+This sample demonstrates how to wrap an agent from the [smol-agent](https://github.com/smol-ai/developer) framework, serve it using the A2A protocol, and deploy it to Google Cloud Run. The agent is configured to use OpenAI's `gpt-4o` model.
 
 The agent takes a natural language prompt describing a task, generates a plan and Python code to accomplish the task, executes the code, and returns the result.
 
@@ -8,12 +8,12 @@ The agent takes a natural language prompt describing a task, generates a plan an
 
 ## Architecture
 
-```mermaid  
+$$$mermaid  
 sequenceDiagram  
 participant Client as A2A Client  
 participant GCR as Google Cloud Run (A2A Server)  
 participant Agent as Smol Agent  
-participant LLM as LLM API (e.g., Gemini)
+participant LLM as OpenAI API (gpt-4o)
 
     Client->>GCR: Send task prompt (e.g., "write a python script to calculate fibonacci")  
     GCR->>Agent: Forward prompt to Smol Agent  
@@ -31,13 +31,13 @@ participant LLM as LLM API (e.g., Gemini)
   
     Agent-->>GCR: Return final result of execution  
     GCR-->>Client: Return final artifact  
-```
+$$$
 
 ## Prerequisites
 
 -   Python 3.12+
 -   [UV](https://docs.astral.sh/uv/)
--   An LLM API Key (e.g., for Gemini or OpenAI)
+-   An OpenAI API Key.
 -   Google Cloud SDK (`gcloud`) installed and authenticated.
 -   A Google Cloud project with billing enabled and the Cloud Run API enabled.
 
@@ -45,42 +45,40 @@ participant LLM as LLM API (e.g., Gemini)
 
 1.  **Navigate to the directory:**
 
-    ```bash  
+    $$$bash  
     cd docs/cloudrun-a2a  
-    ```
+    $$$
 
 2.  **Create an environment file (`.env`):**
 
-    This agent uses `litellm` and can be configured for various models. The example below uses Gemini.
-
-    ```bash  
-    echo "GEMINI_API_KEY=your_gemini_api_key_here" > .env  
-    ```
+    $$$bash  
+    echo "OPENAI_API_KEY=your_openai_api_key_here" > .env  
+    $$$
 
 3.  **Set up the Python environment and install dependencies:**
 
-    ```bash  
+    $$$bash  
     uv venv  
     source .venv/bin/activate  
     uv sync  
-    ```
+    $$$
 
 4.  **Run the agent locally:**
 
     The server will start on `http://localhost:8080`.
 
-    ```bash  
+    $$$bash  
     uv run .  
-    ```
+    $$$
 
 5.  **Test with the A2A CLI Client:**
 
     In a separate terminal (with the venv activated):
 
-    ```bash  
+    $$$bash  
     cd samples/python/hosts/cli  
     uv run . --agent http://localhost:8080  
-    ```  
+    $$$  
     **Example prompt:** `write a python script that calculates the 10th fibonacci number and prints it`
 
 ## Deployment to Google Cloud Run
@@ -89,65 +87,65 @@ participant LLM as LLM API (e.g., Gemini)
 
 Create a dedicated service account for the Cloud Run service.
 
-```sh  
+$$$sh  
 gcloud iam service-accounts create smol-a2a-agent-sa \  
 --description="Service account for the smol-agent A2A Cloud Run service" \  
 --display-name="Smol A2A Agent SA"  
-```
+$$$
 
 ### 2. Store API Key in Secret Manager
 
-Store your LLM API key securely in Google Cloud Secret Manager.
+Store your OpenAI API key securely in Google Cloud Secret Manager.
 
-```sh
+$$$sh
 # Create the secret
-gcloud secrets create gemini-api-key --replication-policy="automatic"
+gcloud secrets create openai-api-key --replication-policy="automatic"
 
 # Add the secret value (replace YOUR_API_KEY)
-printf "YOUR_API_KEY" | gcloud secrets versions add gemini-api-key --data-file=-  
-```
+printf "YOUR_API_KEY" | gcloud secrets versions add openai-api-key --data-file=-  
+$$$
 
 ### 3. Grant Secret Access to the Service Account
 
 Allow the service account to access the secret.
 
-```sh  
-gcloud secrets add-iam-policy-binding gemini-api-key \  
+$$$sh  
+gcloud secrets add-iam-policy-binding openai-api-key \  
 --member="serviceAccount:smol-a2a-agent-sa@$(gcloud config get-value project).iam.gserviceaccount.com" \  
 --role="roles/secretmanager.secretAccessor"  
-```
+$$$
 
 ### 4. Deploy to Cloud Run
 
-Deploy the agent using the `--source=.` flag, which tells Cloud Run to build and deploy from the current directory.
+Deploy the agent using the `--source=.` flag, which tells Cloud Run to build and deploy from the current directory using Google Cloud Buildpacks.
 
-```sh  
+$$$sh  
 gcloud run deploy smol-a2a-agent \  
 --source=. \  
 --region="us-central1" \  
 --allow-unauthenticated \  
 --service-account="smol-a2a-agent-sa@$(gcloud config get-value project).iam.gserviceaccount.com" \  
---set-secrets="GEMINI_API_KEY=gemini-api-key:latest"  
-```
+--set-secrets="OPENAI_API_KEY=openai-api-key:latest"  
+$$$
 
--   `--source=.`: Deploys from the current directory. Cloud Run uses the `Procfile` to know how to run the service.
+-   `--source=.`: Deploys from the current directory. Cloud Run uses the `Procfile` to determine how to run the service.
 -   `--allow-unauthenticated`: Makes the agent publicly accessible for this demo.
--   `--set-secrets`: Securely mounts the Gemini API key secret as an environment variable.
+-   `--set-secrets`: Securely mounts the OpenAI API key secret as an environment variable.
 
 After deployment, Cloud Run will provide a **Service URL**. You must update your service to use this URL for its public-facing Agent Card.
 
 ### 5. Update the Agent Card URL
 
-Get the URL from the previous step and update the `APP_URL` environment variable.
+Get the URL from the previous step and update the `APP_URL` environment variable for the running service.
 
-```sh
+$$$sh
 # Replace {SERVICE_URL} with the URL from the deploy command
 SERVICE_URL="{SERVICE_URL}"
 
 gcloud run services update smol-a2a-agent \  
 --region="us-central1" \  
 --update-env-vars="APP_URL=${SERVICE_URL}"  
-```
+$$$
 
 Your agent is now live and can be accessed via the A2A CLI client using its public URL.
 

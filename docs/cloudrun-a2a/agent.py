@@ -8,7 +8,7 @@ import smol_dev
 from litellm import completion
 
 # Set the model for smol-dev to use. This can be configured via environment variables.
-smol_dev.MODEL = os.getenv("SMOL_MODEL", "gemini/gemini-1.5-flash")
+smol_dev.MODEL = os.getenv("SMOL_MODEL", "gpt-4o")
 
 logger = logging.getLogger(__name__)
 
