@@ -1,6 +1,7 @@
 // src/constants/platformConstants.js
 export const PLATFORM_IDS = {
     GOOGLE_VERTEX: 'google_vertex',
+    A2A: 'a2a',
     AWS_BEDROCK: 'aws_bedrock',
     LLAMASTACK: 'llamastack',
     WATSONX: 'watsonx'
@@ -10,6 +11,11 @@ export const PLATFORMS = [
     {
         id: PLATFORM_IDS.GOOGLE_VERTEX,
         name: 'Google Vertex AI',
+        isConstructed: true,
+    },
+    {
+        id: PLATFORM_IDS.A2A,
+        name: 'A2A Compliant',
         isConstructed: true,
     },
     {

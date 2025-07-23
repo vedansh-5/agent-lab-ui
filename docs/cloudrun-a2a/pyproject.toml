@@ -1,0 +1,19 @@
+[project]
+name = "smol-a2a-agent"
+version = "0.1.0"
+description = "A smol-agent served via A2A on Google Cloud Run."
+dependencies = [
+    "a2a-sdk>=0.3.0",
+    "smol-dev==0.1.18",
+    "uvicorn",
+    "gunicorn",
+    "click",
+    "python-dotenv",
+    "litellm"
+]
+
+[project.scripts]
+start = "__main__:cli"
+
+[tool.uv]
+requires-python = ">=3.12"

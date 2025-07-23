@@ -22,7 +22,7 @@ from handlers.context_handler import (
     _process_pdf_content_logic
 )
 from handlers.mcp_handler import _list_mcp_server_tools_logic_async
-
+from handlers.a2a_handler import _fetch_a2a_agent_card_logic_async
 
 # --- Cloud Function Definitions ---
 
@@ -84,6 +84,12 @@ def process_pdf_content(req: https_fn.CallableRequest):
 def list_mcp_server_tools(req: https_fn.CallableRequest):
     # _list_mcp_server_tools_logic_async is async, so we need to run it in an event loop
     return asyncio.run(_list_mcp_server_tools_logic_async(req))
+
+@https_fn.on_call(memory=options.MemoryOption.GB_1, timeout_sec=60)
+@handle_exceptions_and_log
+def fetchA2AAgentCard(req: https_fn.CallableRequest):
+    """Fetches the AgentCard from a remote A2A compliant agent endpoint."""
+    return asyncio.run(_fetch_a2a_agent_card_logic_async(req))
 
 # Task handler for executing queries in the background
 @tasks_fn.on_task_dispatched(

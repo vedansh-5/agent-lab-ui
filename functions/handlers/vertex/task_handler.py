@@ -1,12 +1,17 @@
 # functions/handlers/vertex/task_handler.py
 import asyncio
 import traceback
+import json
 from firebase_admin import firestore
 from common.core import db, logger
 from common.config import get_gcp_project_config
-from common.adk_helpers import instantiate_adk_agent_from_config, get_model_config_from_firestore
+from common.adk_helpers import instantiate_adk_agent_from_config
 
-# ... (other imports from the original query_orchestrator will be needed here)
+# NEW import for A2A client logic
+import httpx
+from a2a.types import Message as A2AMessage, TextPart
+
+
 from .query_utils import get_reasoning_engine_id_from_name
 from .query_log_fetcher import fetch_vertex_logs_for_query
 from .query_session_manager import ensure_adk_session
@@ -32,6 +37,97 @@ async def get_full_message_history(chat_id, leaf_message_id):
         current_id = message.get("parentMessageId")
     return history
 
+async def _run_a2a_agent_and_stream(
+        participant_config: dict,
+        conversation_history: list,
+        assistant_message_ref
+):
+    """
+    Handles the logic for running an A2A agent.
+    """
+    endpoint_url = participant_config.get("endpointUrl")
+    if not endpoint_url:
+        raise ValueError("A2A agent config is missing 'endpointUrl'.")
+
+        # 1. Construct the message payload for the A2A agent
+    # The A2A protocol expects a list of turns. We'll simplify and send the last user message.
+    # A more advanced implementation could map the entire history.
+    last_user_message = next((msg for msg in reversed(conversation_history) if msg.get("participant", "").startswith("user:")), None)
+
+    if not last_user_message or not last_user_message.get("content"):
+        logger.warn(f"[A2AExecutor] No user content found in history for A2A agent call. Sending an empty message.")
+        a2a_message_content = ""
+    else:
+        a2a_message_content = last_user_message.get("content")
+
+    a2a_message = A2AMessage(parts=[TextPart(text=a2a_message_content)])
+
+    # 2. POST to create the task
+    create_task_url = f"{endpoint_url.rstrip('/')}/v1/tasks"
+    errors = []
+    final_text = ""
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            logger.info(f"[A2AExecutor] Creating task at {create_task_url}")
+            # The A2A client library might simplify this, but direct httpx is clear
+            create_task_response = await client.post(create_task_url, json={"message": a2a_message.model_dump()})
+            create_task_response.raise_for_status()
+            task_data = create_task_response.json()
+            task_id = task_data.get("id")
+            if not task_id:
+                raise ValueError("A2A server response did not include a task ID.")
+
+            logger.info(f"[A2AExecutor] Task {task_id} created. Opening event stream.")
+
+            # 3. Open SSE connection to events endpoint
+            events_url = f"{endpoint_url.rstrip('/')}/v1/tasks/{task_id}/events"
+
+            # Using httpx for SSE
+            async with client.stream("GET", events_url, headers={"Accept": "text/event-stream"}) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line.startswith("data:"):
+                        try:
+                            event_json = line[len("data:"):].strip()
+                            event_data = json.loads(event_json)
+
+                            # Convert A2A event to a simplified ADK-like event for Firestore
+                            adk_like_event = {"type": "a2a_event", "source_event": event_data}
+                            assistant_message_ref.update({"run.outputEvents": firestore.ArrayUnion([adk_like_event])})
+
+                            # Process event for final text and errors
+                            if event_data.get("type") == "agent.artifact.update" and event_data.get("artifact"):
+                                for part in event_data["artifact"].get("parts", []):
+                                    if part.get("text"):
+                                        final_text += part["text"]
+
+                            if event_data.get("type") == "task.update" and event_data["task"].get("state") == "failed":
+                                error_detail = event_data["task"].get("error", {}).get("message", "Unknown error from A2A agent.")
+                                errors.append(f"A2A agent task failed: {error_detail}")
+                                break # Stop processing on failure
+
+                            if event_data.get("type") == "task.update" and event_data["task"].get("state") == "completed":
+                                logger.info(f"[A2AExecutor] Received task completion event for {task_id}.")
+                                break # Stop processing on completion
+
+                        except json.JSONDecodeError:
+                            logger.warn(f"[A2AExecutor] Could not decode JSON from event line: {line}")
+                        except Exception as e_event_proc:
+                            logger.error(f"[A2AExecutor] Error processing event: {e_event_proc}")
+                            errors.append(f"Error processing A2A event: {str(e_event_proc)}")
+
+        except httpx.HTTPStatusError as e:
+            error_msg = f"A2A agent returned an error: {e.response.status_code} - {e.response.text[:200]}"
+            logger.error(f"[A2AExecutor] {error_msg}")
+            errors.append(error_msg)
+        except Exception as e:
+            error_msg = f"Failed to communicate with A2A agent: {str(e)}"
+            logger.error(f"[A2AExecutor] {error_msg}\n{traceback.format_exc()}")
+            errors.append(error_msg)
+
+    return {"finalResponseText": final_text, "queryErrorDetails": errors}
+
 
 async def _execute_and_stream_to_firestore(
         chat_id: str,
@@ -41,7 +137,7 @@ async def _execute_and_stream_to_firestore(
         adk_user_id: str
 ):
     """
-    Orchestrates querying a deployed Vertex AI agent OR a model, streaming events to Firestore.
+    Orchestrates querying a deployed Vertex AI agent OR a model OR an A2A agent, streaming events to Firestore.
     """
     assistant_message_ref = db.collection("chats").document(chat_id).collection("messages").document(assistant_message_id)
     assistant_message_snap = assistant_message_ref.get()
@@ -52,16 +148,15 @@ async def _execute_and_stream_to_firestore(
     assistant_message_data = assistant_message_snap.to_dict()
     parent_message_id = assistant_message_data.get("parentMessageId")
     if not parent_message_id:
-        logger.error(f"[TaskExecutor] Assistant message {assistant_message_id} has no parent. Cannot construct history.")
-        return
+        # If there's no parent, it's the first message. The history is just the input message.
+        conversation_history = [{"content": assistant_message_data.get("run", {}).get("inputMessage", "")}]
+    else:
+        conversation_history = await get_full_message_history(chat_id, parent_message_id)
 
-    conversation_history = await get_full_message_history(chat_id, parent_message_id)
-
-    # Format for ADK: combine all messages into one string
+        # Format for ADK: combine all messages into one string
     # A more sophisticated approach might use structured input later
     full_message_text = "\n\n".join([msg.get("content", "") for msg in conversation_history])
 
-    query_start_time_utc = datetime.now(timezone.utc)
     logger.info(f"[TaskExecutor] Initiating query for assistant message: {assistant_message_id}.")
 
     project_id, location, _ = get_gcp_project_config()
@@ -79,8 +174,14 @@ async def _execute_and_stream_to_firestore(
         raise ValueError(f"Participant config not found for ID: {agent_id or model_id}")
     participant_config = participant_snap.to_dict()
 
-    # For Agents, they must be deployed. For Models, they run ephemerally.
-    if agent_id:
+    agent_platform = participant_config.get("platform")
+
+    # BRANCHING LOGIC BASED ON PLATFORM
+    if agent_id and agent_platform == 'a2a':
+        logger.info(f"[TaskExecutor] Executing A2A agent: {agent_id}")
+        return await _run_a2a_agent_and_stream(participant_config, conversation_history, assistant_message_ref)
+
+    elif agent_id: # Defaults to google_vertex
         resource_name = participant_config.get("vertexAiResourceName")
         if not resource_name or participant_config.get("deploymentStatus") != "deployed":
             raise ValueError(f"Agent {agent_id} is not successfully deployed.")
@@ -177,9 +278,6 @@ async def _run_agent_task_logic(data: dict):
             "run.queryErrorDetails": final_state_data.get("queryErrorDetails"),
             "run.completedTimestamp": firestore.SERVER_TIMESTAMP
         }
-        # If the content wasn't streamed directly, set it here
-        if "content" not in assistant_message_ref.get().to_dict():
-            final_update_payload["content"] = final_state_data.get("finalResponseText", "")
 
         assistant_message_ref.update(final_update_payload)
         logger.info(f"[TaskHandler] Message {assistant_message_id} completed with status: {final_update_payload['run.status']}")

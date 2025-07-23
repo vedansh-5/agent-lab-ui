@@ -18,6 +18,7 @@ import AddIcon from '@mui/icons-material/Add';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import NoteAddIcon from '@mui/icons-material/NoteAdd';
+import LinkIcon from '@mui/icons-material/Link';
 
 
 const AgentsPage = () => {
@@ -119,6 +120,11 @@ const AgentsPage = () => {
         setOpenSplitButton(false);
     }
 
+    const handleAddA2AMenuItemClick = () => {
+        navigate('/import-a2a-agent');
+        setOpenSplitButton(false);
+    };
+
     const handleFileImport = async (event) => {
         const file = event.target.files[0];
         if (!file) return;
@@ -200,7 +206,10 @@ const AgentsPage = () => {
                                 <ClickAwayListener onClickAway={handleSplitButtonClose}>
                                     <MenuList id="split-button-menu">
                                         <MuiMenuItem onClick={handleImportMenuItemClick}>
-                                            <FileUploadIcon sx={{mr:1}} fontSize="small"/> Import Agent
+                                            <FileUploadIcon sx={{mr:1}} fontSize="small"/> Import from JSON
+                                        </MuiMenuItem>
+                                        <MuiMenuItem onClick={handleAddA2AMenuItemClick}>
+                                            <LinkIcon sx={{mr:1}} fontSize="small"/> Add A2A Compliant Agent
                                         </MuiMenuItem>
                                     </MenuList>
                                 </ClickAwayListener>
@@ -249,4 +258,4 @@ const AgentsPage = () => {
     );
 };
 
-export default AgentsPage;
+export default AgentsPage;  

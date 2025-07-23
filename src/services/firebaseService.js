@@ -128,14 +128,20 @@ export const createAgentInFirestore = async (userId, agentData, isImport = false
         isPublic: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        deploymentStatus: "not_deployed",
-        vertexAiResourceName: null,
-        lastDeployedAt: null,
-        lastDeploymentAttemptAt: null,
-        deploymentError: null,
     };
     if (isImport) {
         delete dataToSave.id;
+    }
+        // Add platform-specific initial state fields
+        if (agentData.platform === 'a2a') {
+            // A2A agents don't have vertex deployment status
+            dataToSave.deploymentStatus = 'n/a';
+        } else { // Default to google_vertex
+            dataToSave.platform = 'google_vertex';
+            dataToSave.deploymentStatus = "not_deployed";
+            dataToSave.vertexAiResourceName = null;
+            dataToSave.lastDeployedAt = null;
+            dataToSave.deploymentError = null;
     }
 
     const docRef = await addDoc(collection(db, "agents"), dataToSave);
