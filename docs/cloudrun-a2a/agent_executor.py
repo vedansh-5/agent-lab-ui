@@ -4,10 +4,12 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
     InvalidParamsError,
+    Part,
     Task,
+    TextPart,
     UnsupportedOperationError,
 )
-from a2a.utils import completed_task, new_artifact, new_text_part
+from a2a.utils import completed_task, new_artifact
 from a2a.utils.errors import ServerError
 from agent import SmolWeatherAgent
 
@@ -44,7 +46,7 @@ class SmolAgentExecutor(AgentExecutor):
 
             # Create an artifact with the text part
             artifact = new_artifact(
-                parts=[new_text_part(result_text)],
+                parts=[Part(root=TextPart(text=result_text))],
                 name=f'weather_report_{context.task_id}',
             )
 
@@ -73,4 +75,4 @@ class SmolAgentExecutor(AgentExecutor):
 
     def _validate_request(self, context: RequestContext) -> bool:
         # No special validation needed for this simple agent
-        return False  
+        return False

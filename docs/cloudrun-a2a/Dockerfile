@@ -1,5 +1,18 @@
 # Use an official Python runtime as a parent image
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
+
+# The installer requires curl (and certificates) to download the release archive
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+
+# Download the latest installer
+ADD https://astral.sh/uv/install.sh /uv-installer.sh
+
+# Run the installer then remove it
+RUN sh /uv-installer.sh && rm /uv-installer.sh
+
+# Ensure the installed binary is on the `PATH`
+ENV PATH="/root/.local/bin/:$PATH"
+ENV UV_SYSTEM_PYTHON=1
 
 # Set the working directory in the container
 WORKDIR /app
@@ -8,14 +21,14 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
-# Install uv for package management
-RUN pip install uv
 
-# Copy the requirements file into the container
-COPY requirements.txt .
+# Copy the pyproject.toml file into the container
+COPY pyproject.toml .
+
 
 # Install dependencies using uv
-RUN uv pip install --system --no-cache -r requirements.txt
+# --system installs packages into the system's site-packages, which is standard for containers.
+RUN uv pip install --no-cache --system -r pyproject.toml
 
 # Copy the application code into the container
 COPY . .

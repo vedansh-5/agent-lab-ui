@@ -54,7 +54,7 @@ participant Tool as get_weather()
 3.  **Set up the Python environment and install dependencies:**
 
     ```bash  
-    uv venv  
+    uv venv --python 3.12 
     source .venv/bin/activate  
     uv sync  
     ```
@@ -67,13 +67,21 @@ participant Tool as get_weather()
     ```
 
 5.  **Test with an A2A client:**
-
-    In a separate terminal (with the venv activated), connect to the agent using the sample CLI client:
+    In a separate terminal (with the venv activated), you can use the sample A2A CLI client to interact with the agent:
 
     ```bash  
-    cd samples/python/hosts/cli  
+    git clone https://github.com/a2aproject/a2a-samples /tmp/a2a-samples
+    cd /tmp/a2a-samples/samples/python/hosts/cli  
     uv run . --agent http://localhost:8080  
     ```
+    The output should be something like this:
+
+    ```bash
+    ======= Agent Card ========
+    {"capabilities":{"streaming":false},"defaultInputModes":["text","text/plain"],"defaultOutputModes":["text","text/plain"],"description":"An agent that provides delightfully grim weather forecasts.","name":"Smol Weather Agent","protocolVersion":"0.2.6","skills":[{"description":"Provides a completely unserious and pessimistic weather forecast.","examples":["What is the weather like in Paris?"],"id":"get_weather","name":"Get Weather Forecast","tags":["weather","forecast","humor"]}],"url":"http://0.0.0.0:8080/","version":"0.1.0"}
+    ```
+    
+6.  **Send a task to the agent:**
 
 ## Deploy to Google Cloud Run
 
@@ -84,9 +92,9 @@ Deploying to Cloud Run packages your code into a container and runs it in a mana
     Replace `YOUR_PROJECT_ID` and `YOUR_REGION` with your GCP project ID and desired region (e.g., `us-central1`).
 
     ```bash  
-    export PROJECT_ID="YOUR_PROJECT_ID"  
+    export PROJECT_ID=$(gcloud config get-value project)
     export REGION="YOUR_REGION"  
-    export SERVICE_NAME="a2a-smolagent-weather"  
+    export SERVICE_NAME="a2a-smolagent-weather-demo"  
     ```
 
 2.  **Store your API Key in Secret Manager:**
@@ -114,6 +122,7 @@ Deploying to Cloud Run packages your code into a container and runs it in a mana
     ```bash  
     gcloud run deploy $SERVICE_NAME \  
     --source . \  
+    --platform=managed \
     --region $REGION \  
     --project $PROJECT_ID \  
     --allow-unauthenticated \  
