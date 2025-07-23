@@ -8,7 +8,7 @@ The agent takes a natural language prompt describing a task, generates a plan an
 
 ## Architecture
 
-$$$mermaid  
+```mermaid  
 sequenceDiagram  
 participant Client as A2A Client  
 participant GCR as Google Cloud Run (A2A Server)  
@@ -31,7 +31,7 @@ participant LLM as OpenAI API (gpt-4o)
   
     Agent-->>GCR: Return final result of execution  
     GCR-->>Client: Return final artifact  
-$$$
+```
 
 ## Prerequisites
 
@@ -45,40 +45,40 @@ $$$
 
 1.  **Navigate to the directory:**
 
-    $$$bash  
+    ```bash  
     cd docs/cloudrun-a2a  
-    $$$
+    ```
 
 2.  **Create an environment file (`.env`):**
 
-    $$$bash  
+    ```bash  
     echo "OPENAI_API_KEY=your_openai_api_key_here" > .env  
-    $$$
+    ```
 
 3.  **Set up the Python environment and install dependencies:**
 
-    $$$bash  
+    ```bash  
     uv venv  
     source .venv/bin/activate  
     uv sync  
-    $$$
+    ```
 
 4.  **Run the agent locally:**
 
     The server will start on `http://localhost:8080`.
 
-    $$$bash  
+    ```bash  
     uv run .  
-    $$$
+    ```
 
 5.  **Test with the A2A CLI Client:**
 
     In a separate terminal (with the venv activated):
 
-    $$$bash  
+    ```bash  
     cd samples/python/hosts/cli  
     uv run . --agent http://localhost:8080  
-    $$$  
+    ```  
     **Example prompt:** `write a python script that calculates the 10th fibonacci number and prints it`
 
 ## Deployment to Google Cloud Run
@@ -87,46 +87,46 @@ $$$
 
 Create a dedicated service account for the Cloud Run service.
 
-$$$sh  
+```sh  
 gcloud iam service-accounts create smol-a2a-agent-sa \  
 --description="Service account for the smol-agent A2A Cloud Run service" \  
 --display-name="Smol A2A Agent SA"  
-$$$
+```
 
 ### 2. Store API Key in Secret Manager
 
 Store your OpenAI API key securely in Google Cloud Secret Manager.
 
-$$$sh
+```sh
 # Create the secret
 gcloud secrets create openai-api-key --replication-policy="automatic"
 
 # Add the secret value (replace YOUR_API_KEY)
 printf "YOUR_API_KEY" | gcloud secrets versions add openai-api-key --data-file=-  
-$$$
+```
 
 ### 3. Grant Secret Access to the Service Account
 
 Allow the service account to access the secret.
 
-$$$sh  
+```sh  
 gcloud secrets add-iam-policy-binding openai-api-key \  
 --member="serviceAccount:smol-a2a-agent-sa@$(gcloud config get-value project).iam.gserviceaccount.com" \  
 --role="roles/secretmanager.secretAccessor"  
-$$$
+```
 
 ### 4. Deploy to Cloud Run
 
 Deploy the agent using the `--source=.` flag, which tells Cloud Run to build and deploy from the current directory using Google Cloud Buildpacks.
 
-$$$sh  
+```sh  
 gcloud run deploy smol-a2a-agent \  
 --source=. \  
 --region="us-central1" \  
 --allow-unauthenticated \  
 --service-account="smol-a2a-agent-sa@$(gcloud config get-value project).iam.gserviceaccount.com" \  
 --set-secrets="OPENAI_API_KEY=openai-api-key:latest"  
-$$$
+```
 
 -   `--source=.`: Deploys from the current directory. Cloud Run uses the `Procfile` to determine how to run the service.
 -   `--allow-unauthenticated`: Makes the agent publicly accessible for this demo.
@@ -138,14 +138,14 @@ After deployment, Cloud Run will provide a **Service URL**. You must update your
 
 Get the URL from the previous step and update the `APP_URL` environment variable for the running service.
 
-$$$sh
+```sh
 # Replace {SERVICE_URL} with the URL from the deploy command
 SERVICE_URL="{SERVICE_URL}"
 
 gcloud run services update smol-a2a-agent \  
 --region="us-central1" \  
 --update-env-vars="APP_URL=${SERVICE_URL}"  
-$$$
+```
 
 Your agent is now live and can be accessed via the A2A CLI client using its public URL.
 
