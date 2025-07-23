@@ -1,56 +1,44 @@
 import asyncio
-import logging
-import os
-from collections.abc import AsyncIterable
-from typing import Any
 
-import smol_dev
-from litellm import completion
+from smolagents import LiteLLMModel, ToolCallingAgent, tool
 
-# Set the model for smol-dev to use. This can be configured via environment variables.
-smol_dev.MODEL = os.getenv("SMOL_MODEL", "gpt-4o")
 
-logger = logging.getLogger(__name__)
+class SmolWeatherAgent:
+    """
+    A simple smolagents agent that uses a mock tool to report the weather.
+    It demonstrates how to wrap a synchronous agent for use in an async A2A server.
+    """
 
-class SmolAgentWrapper:
-    """A wrapper for the smol-dev agent to integrate with the A2A protocol."""
+    SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
 
-    SUPPORTED_CONTENT_TYPES = ["text/plain"]
+    def __init__(self):
+        @tool
+        def get_weather(location: str) -> str:
+            """
+            Get weather in the next days at a given location.
+            Secretly this tool does not care about the location; it hates the weather everywhere.
 
-    async def stream(self, query: str) -> AsyncIterable[dict[str, Any]]:
+            Args:
+                location: The location to get the weather for.
+            """
+            return "The weather is UNGODLY, with torrential rains and temperatures below -10°C."
+
+            # Configure the agent to use OpenAI via LiteLLM
+        # This can be easily swapped for other models by changing the model_id string.
+        model = LiteLLMModel(model_id="gpt-4o-mini")
+
+        self.agent = ToolCallingAgent(
+            tools=[get_weather],
+            model=model,
+            verbosity_level=1,
+        )
+
+    async def ainvoke(self, query: str) -> str:
         """
-        Processes a user query by generating a plan, writing code, and executing it.
-        Yields progress updates throughout the process.
-
-        Args:
-            query: The user's natural language prompt.
-
-        Yields:
-            A dictionary containing the status and content of each step.
+        Asynchronously invoke the agent's synchronous run method in a separate thread
+        to avoid blocking the main async event loop.
         """
-        try:
-            # 1. Generate the plan
-            yield {"status": "working", "content": "Generating plan..."}
-            plan = await asyncio.to_thread(smol_dev.plan, query)
-            yield {"status": "working", "content": f"**Plan Generated:**\n\n{plan}"}
-
-            # 2. Generate the code
-            yield {"status": "working", "content": "Generating code..."}
-            # The smol_dev.code function expects a file path, but we can pass the plan directly
-            # by simulating the file content.
-            generated_code = await asyncio.to_thread(smol_dev.code, plan, query)
-            yield {"status": "working", "content": f"**Code Generated:**\n```python\n{generated_code}\n```"}
-
-            # 3. Execute the code
-            yield {"status": "working", "content": "Executing code..."}
-
-            # WARNING: Executing LLM-generated code is dangerous.
-            # In a real application, this must be done in a secure, sandboxed environment.
-            execution_result = await asyncio.to_thread(smol_dev.execute, generated_code)
-
-            final_output = f"**Execution Result:**\n\n{execution_result}"
-            yield {"status": "completed", "content": final_output}
-
-        except Exception as e:
-            logger.error(f"Error in SmolAgentWrapper: {e}", exc_info=True)
-            yield {"status": "failed", "content": f"An error occurred: {str(e)}"}  
+        # smolagents agent.run() is synchronous, so we run it in a thread
+        # to be compatible with the async A2A server.
+        return await asyncio.to_thread(self.agent.run, query)
+  

@@ -1,22 +1,27 @@
 import logging
+
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.server.tasks import TaskUpdater
-from a2a.types import TaskState, UnsupportedOperationError
-from a2a.utils import new_task
+from a2a.types import (
+    InvalidParamsError,
+    Task,
+    UnsupportedOperationError,
+)
+from a2a.utils import completed_task, new_artifact, new_text_part
 from a2a.utils.errors import ServerError
-from agent import SmolAgentWrapper
+from agent import SmolWeatherAgent
+
 
 logger = logging.getLogger(__name__)
 
+
 class SmolAgentExecutor(AgentExecutor):
     """
-    An AgentExecutor that integrates the SmolAgentWrapper with the A2A protocol.
-    It handles the lifecycle of a task, streaming updates from the agent back to the client.
+    An AgentExecutor that bridges the A2A server with our SmolWeatherAgent.
     """
 
     def __init__(self):
-        self.agent = SmolAgentWrapper()
+        self.agent = SmolWeatherAgent()
 
     async def execute(
             self,
@@ -24,47 +29,48 @@ class SmolAgentExecutor(AgentExecutor):
             event_queue: EventQueue,
     ) -> None:
         """
-        Executes a task based on the user's input from the RequestContext.
+        Executes the agent logic for an incoming request.
         """
+        if self._validate_request(context):
+            raise ServerError(error=InvalidParamsError())
+
         query = context.get_user_input()
-        task = context.current_task
-
-        if not task:
-            task = new_task(context.message)
-            await event_queue.enqueue_event(task)
-
-        updater = TaskUpdater(event_queue, task.id, task.contextId)
+        logger.info(f"Received query for session {context.context_id}: '{query}'")
 
         try:
-            # Stream results from the smol agent
-            async for item in self.agent.stream(query):
-                status = item["status"]
-                content = item["content"]
+            # Asynchronously invoke the agent. The agent itself runs its sync logic in a thread.
+            result_text = await self.agent.ainvoke(query)
+            logger.info(f"Agent for session {context.context_id} returned: '{result_text}'")
 
-                if status == "working":
-                    # Send an intermediate status update
-                    await updater.update_status(
-                        TaskState.working,
-                        updater.new_agent_message_from_text(content)
-                    )
-                elif status == "completed":
-                    # The task is done, send the final artifact and complete the task
-                    await updater.add_artifact_from_text(
-                        content, name="smol_agent_result"
-                    )
-                    await updater.complete()
-                elif status == "failed":
-                    # The task failed, send an error message and fail the task
-                    await updater.failed(
-                        updater.new_agent_message_from_text(content)
-                    )
-        except Exception as e:
-            logger.error(f"Executor error for task {task.id}: {e}", exc_info=True)
-            await updater.failed(
-                updater.new_agent_message_from_text(f"A critical error occurred: {e}")
+            # Create an artifact with the text part
+            artifact = new_artifact(
+                parts=[new_text_part(result_text)],
+                name=f'weather_report_{context.task_id}',
             )
 
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        # Smol-agent execution is synchronous within its steps, so cancellation is not straightforward.
-        # This is a placeholder for a more advanced implementation.
-        raise ServerError(error=UnsupportedOperationError(message="Cancellation is not supported for this agent."))
+            # Create a completed task event with the artifact
+            task_completion = completed_task(
+                context.task_id,
+                context.context_id,
+                artifacts=[artifact],
+                history=[context.message],
+            )
+
+            await event_queue.enqueue_event(task_completion)
+
+        except Exception as e:
+            logger.error(f"Error invoking agent for session {context.context_id}: {e}", exc_info=True)
+            # You could enqueue a failed task event here if desired
+            raise ServerError(
+                error=ValueError(f"Error invoking smolagent: {e}")
+            ) from e
+
+    async def cancel(
+            self, request: RequestContext, event_queue: EventQueue
+    ) -> Task | None:
+        # Cancellation is not implemented for this simple agent
+        raise ServerError(error=UnsupportedOperationError())
+
+    def _validate_request(self, context: RequestContext) -> bool:
+        # No special validation needed for this simple agent
+        return False  

@@ -1,0 +1,7 @@
+a2a-sdk>=0.3.0
+smolagents>=0.2.1
+click>=8.0
+uvicorn>=0.20
+python-dotenv>=1.0
+litellm>=1.39.5
+openai>=1.0.0

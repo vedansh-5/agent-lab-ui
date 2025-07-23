@@ -4,86 +4,84 @@ import sys
 
 import click
 import uvicorn
-
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+from agent import SmolWeatherAgent
 from agent_executor import SmolAgentExecutor
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+
+# Load environment variables from .env file for local development
 load_dotenv()
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Agent and Server Configuration ---
 
-# This function creates and configures the main ASGI application
-def create_app():
-    """Creates and configures the A2A Starlette application."""
-    if not os.getenv("OPENAI_API_KEY"):
-        logger.warning("OPENAI_API_KEY environment variable not set. The agent may not function correctly.")
+def get_agent_card(host: str, port: int, app_url_override: str | None) -> AgentCard:
+    """Constructs the AgentCard, detecting the URL for Cloud Run."""
+    if app_url_override:
+        # On Cloud Run, the service URL is provided, but not the port.
+        # 'auto' is a special value we use to signal we need to get the URL from Cloud Run metadata.
+        # This environment variable is automatically set by Cloud Run.
+        if app_url_override == "auto":
+            service_url = os.getenv("SERVICE_URL", f"http://{host}:{port}/")
+        else:
+            service_url = app_url_override
+    else:
+        service_url = f"http://{host}:{port}/"
 
-        # Determine host and port from environment variables, essential for Cloud Run
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", 8080))
+    logger.info(f"AgentCard URL set to: {service_url}")
 
-    # The APP_URL is crucial for the AgentCard so clients know how to reach the agent.
-    # On Cloud Run, this will be the public URL of the service.
-    # Locally, it points to localhost.
-    app_url = os.getenv("APP_URL", f"http://localhost:{port}/")
-
-    # Define the agent's skill
     skill = AgentSkill(
-        id="smol_dev_skill",
-        name="Generate and Execute Code",
-        description="Takes a natural language prompt, generates a plan and Python code to accomplish the task, executes the code, and returns the result.",
-        tags=["smol-agent", "code-generation", "execution"],
-        examples=["write a python script that calculates the 10th fibonacci number and prints it"],
+        id="get_weather",
+        name="Get Weather Forecast",
+        description="Provides a completely unserious and pessimistic weather forecast.",
+        tags=["weather", "forecast", "humor"],
+        examples=["What is the weather like in Paris?"],
     )
 
-    # Define the Agent Card
-    agent_card = AgentCard(
-        name="Smol Developer Agent",
-        description="An AI agent that can generate and execute code based on a prompt.",
-        url=app_url,
-        version="1.0.0",
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
-        capabilities=AgentCapabilities(streaming=True),
+    return AgentCard(
+        name="Smol Weather Agent",
+        description="An agent that provides delightfully grim weather forecasts.",
+        url=service_url,
+        version="0.1.0",
+        default_input_modes=SmolWeatherAgent.SUPPORTED_CONTENT_TYPES,
+        default_output_modes=SmolWeatherAgent.SUPPORTED_CONTENT_TYPES,
+        capabilities=AgentCapabilities(streaming=False), # This agent is not streaming
         skills=[skill],
     )
 
-    # Set up the A2A request handler with our custom agent executor
+
+@click.command()
+@click.option("--host", default="0.0.0.0", help="Host to bind the server to.")
+@click.option("--port", default=None, type=int, help="Port to bind the server to. Overridden by $PORT env var.")
+@click.option("--app-url-override", default=None, help="Manually override the agent's public URL. Use 'auto' for Cloud Run detection.")
+def main(host: str, port: int | None, app_url_override: str | None):
+    """Entry point for the A2A + smolagents server."""
+    # Cloud Run provides the port to listen on via the PORT environment variable.
+    run_port = port if port is not None else int(os.getenv("PORT", 8080))
+
+    # Check for API key
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.error("OPENAI_API_KEY environment variable not set. The agent will not work.")
+        sys.exit(1)
+
+    agent_card = get_agent_card(host, run_port, app_url_override)
+
     request_handler = DefaultRequestHandler(
         agent_executor=SmolAgentExecutor(),
         task_store=InMemoryTaskStore(),
     )
-
-    # Create the A2A server application
     server = A2AStarletteApplication(
         agent_card=agent_card, http_handler=request_handler
     )
 
-    return server.build()
+    logger.info(f"Starting Smolagents A2A server on {host}:{run_port}")
+    uvicorn.run(server.build(), host=host, port=run_port)
 
-# Create the app instance for Gunicorn to find
-app = create_app()
 
-# --- Click command for local execution ---
-@click.command()
-@click.option('--host', 'host', default='localhost', help="Host for local server.")
-@click.option('--port', 'port', default=8080, help="Port for local server.")
-def cli(host: str, port: int):
-    """Starts the Smol Agent A2A server for local development."""
-    logger.info(f"Starting local server on http://{host}:{port}")
-    uvicorn.run(app, host=host, port=port)
-
-# This block allows running `uv run .` for local development
 if __name__ == "__main__":
-    # this ensures that `cli()` runs when using `uv run .`
-    if not hasattr(sys, '_called_from_uvicorn'):
-        cli()  
+    main()
