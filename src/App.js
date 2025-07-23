@@ -4,13 +4,12 @@ import { BrowserRouter as Router, Routes, Route, Link as RouterLink, useLocation
 import { AuthProvider } from './contexts/AuthContext';
 import { ConfigProvider, useConfig } from './contexts/ConfigContext';
 import { CustomThemeProvider } from './contexts/ThemeContext';
-// Helmet import removed
 
 import Navbar from './components/layout/Navbar';
 import HomePage from './pages/HomePage';
-import DashboardPage from './pages/DashboardPage';
+import AgentsPage from './pages/AgentsPage';
 import CreateAgentPage from './pages/CreateAgentPage';
-import AgentPage from './pages/AgentPage';
+import AgentPage from './pages/AgentsPage';
 import SettingsPage from './pages/SettingsPage';
 import ProtectedRoute from './components/routing/ProtectedRoute';
 import AdminPage from './pages/AdminPage';
@@ -23,6 +22,15 @@ import * as analyticsService from './services/analyticsService';
 import { Box, Container, Typography, Link as MuiLink } from '@mui/material';
 import PlatformUnderConstructionPage from "./pages/PlatformUnderConstructionPage";
 import AboutPage from "./pages/AboutPage";
+
+import ProjectsPage from './pages/ProjectsPage';
+import CreateProjectPage from './pages/CreateProjectPage';
+import ProjectDetailsPage from './pages/ProjectDetailsPage';
+import ModelsPage from './pages/ModelsPage';
+import CreateModelPage from './pages/CreateModelPage';
+import ModelDetailsPage from './pages/ModelDetailsPage';
+import ChatPage from './pages/ChatPage';
+import ToolsPage from './pages/ToolsPage';
 
 // Helper function to update meta tags
 const updateMetaTagContent = (metaId, content) => {
@@ -48,7 +56,6 @@ function AppInitializer() {
             document.title = "AgentLabUI"; // Default title
             updateMetaTagContent('meta-description', "AI Agent Prototyping Platform"); // Default description
         }
-        // If configError, title/meta will remain as set in index.html or last successful update
     }, [config, loadingConfig, configError]);
 
 
@@ -73,8 +80,6 @@ function AppInitializer() {
     // Effect for tracking page views on route changes
     useEffect(() => {
         if (!loadingConfig && config && config.googleAnalyticsId) {
-            // GA will pick up document.title automatically if not explicitly sent.
-            // This ensures the title used by GA is the one most recently set by the effect above or by specific pages.
             analyticsService.logPageView(location.pathname + location.search, document.title);
         }
     }, [location, config, loadingConfig]);
@@ -95,7 +100,6 @@ function AppInitializer() {
 
     return (
         <>
-            {/* Meta tags are now updated directly via DOM manipulation */}
             <AppContent />
             {config?.features?.gdprCookieConsent && <CookieConsentBanner />}
         </>
@@ -120,13 +124,32 @@ function AppContent() {
                     <Route path="/" element={<HomePage />} />
                     <Route path="/unauthorized" element={<UnauthorizedPage />} />
                     <Route path="/about" element={<AboutPage />} />
-                    <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+
+                    {/* New Core Routes */}
+                    <Route path="/projects" element={<ProtectedRoute><ProjectsPage /></ProtectedRoute>} />
+                    <Route path="/create-project" element={<ProtectedRoute><CreateProjectPage /></ProtectedRoute>} />
+                    <Route path="/project/:projectId" element={<ProtectedRoute><ProjectDetailsPage /></ProtectedRoute>} />
+
+                    <Route path="/models" element={<ProtectedRoute><ModelsPage /></ProtectedRoute>} />
+                    <Route path="/create-model" element={<ProtectedRoute><CreateModelPage /></ProtectedRoute>} />
+                    <Route path="/model/:modelId" element={<ProtectedRoute><ModelDetailsPage /></ProtectedRoute>} />
+                    <Route path="/model/:modelId/edit" element={<ProtectedRoute><CreateModelPage isEditMode={true} /></ProtectedRoute>} />
+
+                    <Route path="/tools" element={<ProtectedRoute><ToolsPage /></ProtectedRoute>} />
+
+                    <Route path="/agents" element={<ProtectedRoute><AgentsPage /></ProtectedRoute>} />
                     <Route path="/create-agent" element={<ProtectedRoute><CreateAgentPage /></ProtectedRoute>} />
-                    <Route path="/agent/:agentId/edit" element={<ProtectedRoute><CreateAgentPage isEditMode={true} /></ProtectedRoute>} />
                     <Route path="/agent/:agentId" element={<ProtectedRoute><AgentPage /></ProtectedRoute>} />
+                    <Route path="/agent/:agentId/edit" element={<ProtectedRoute><CreateAgentPage isEditMode={true} /></ProtectedRoute>} />
+
+                    <Route path="/chat/:chatId" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
+
+                    {/* Legacy/Utility Routes */}
+                    <Route path="/dashboard" element={<ProtectedRoute><AgentsPage /></ProtectedRoute>} /> {/* Redirect old dashboard to agents page */}
                     <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
-                    <Route path="/platform-under-construction/:platformId" element={<ProtectedRoute><PlatformUnderConstructionPage /></ProtectedRoute>} />
                     <Route path="/admin" element={<ProtectedRoute requireAdmin={true}><AdminPage /></ProtectedRoute>} />
+                    <Route path="/platform-under-construction/:platformId" element={<ProtectedRoute><PlatformUnderConstructionPage /></ProtectedRoute>} />
+
                     <Route path="*" element={
                         <Box textAlign="center" py={10}>
                             <Typography variant="h3" component="h1" gutterBottom>

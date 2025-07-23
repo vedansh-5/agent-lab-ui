@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useThemeSwitcher } from '../../contexts/ThemeContext';
 
@@ -7,7 +7,8 @@ import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
-import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings'; // For Admin link
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import Box from '@mui/material/Box';
 
 import IconButton from '@mui/material/IconButton';
 import Menu from '@mui/material/Menu';
@@ -20,8 +21,9 @@ import InfoIcon from "@mui/icons-material/Info";
 
 const Navbar = () => {
     const { currentUser, logout } = useAuth();
-    const { selectTheme, currentThemeKey } = useThemeSwitcher();
+    const { selectTheme } = useThemeSwitcher();
     const navigate = useNavigate();
+    const location = useLocation();
     const muiTheme = useTheme();
 
     const [anchorEl, setAnchorEl] = React.useState(null);
@@ -58,17 +60,47 @@ const Navbar = () => {
         handleClose();
     };
 
+    const navItems = [
+        { path: '/projects', label: 'Projects' },
+        { path: '/models', label: 'Models' },
+        { path: '/agents', label: 'Agents' },
+        { path: '/tools', label: 'Tools' },
+    ];
+
     return (
         <AppBar position="fixed" color="primary" enableColorOnDark>
             <Toolbar>
                 <Typography
                     variant="h6"
                     component={RouterLink}
-                    to="/"
-                    sx={{ flexGrow: 1, color: 'inherit', textDecoration: 'none' }}
+                    to={currentUser ? "/projects" : "/"}
+                    sx={{ color: 'inherit', textDecoration: 'none', mr: 2 }}
                 >
                     {muiTheme.customBranding?.appName || 'AgentLabUI'}
                 </Typography>
+
+                {currentUser && (
+                    <Box sx={{ flexGrow: 1, display: { xs: 'none', sm: 'block' } }}>
+                        {navItems.map((item) => (
+                            <Button
+                                key={item.path}
+                                component={RouterLink}
+                                to={item.path}
+                                sx={{
+                                    color: 'white',
+                                    fontWeight: location.pathname.startsWith(item.path) ? 'bold' : 'normal',
+                                    borderBottom: location.pathname.startsWith(item.path) ? '2px solid' : 'none',
+                                    borderRadius: 0,
+                                    mx: 1
+                                }}
+                            >
+                                {item.label}
+                            </Button>
+                        ))}
+                    </Box>
+                )}
+                <Box sx={{ flexGrow: 1, display: { xs: 'block', sm: 'none' } }} />
+
 
                 <Button
                     aria-controls="theme-menu"
@@ -77,7 +109,7 @@ const Navbar = () => {
                     color="inherit"
                     startIcon={muiTheme.palette.mode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
                 >
-                    Theme: {currentThemeKey}
+                    Theme
                 </Button>
                 <Menu
                     id="theme-menu"
@@ -93,10 +125,6 @@ const Navbar = () => {
 
                 {currentUser ? (
                     <>
-
-                        <Button color="inherit" component={RouterLink} to="/dashboard">
-                            Dashboard
-                        </Button>
                         <IconButton
                             size="large"
                             aria-label="account of current user"
@@ -122,22 +150,25 @@ const Navbar = () => {
                             open={Boolean(anchorEl)}
                             onClose={handleClose}
                         >
+                            <Box sx={{ display: { xs: 'block', sm: 'none' }, px: 2, py: 1 }}>
+                                {navItems.map((item) => (
+                                    <MenuItem key={`mobile-${item.path}`} component={RouterLink} to={item.path} onClick={handleClose}>
+                                        {item.label}
+                                    </MenuItem>
+                                ))}
+                            </Box>
                             <MenuItem component={RouterLink} to="/settings" onClick={handleClose}>Settings</MenuItem>
                             <MenuItem component={RouterLink} to="/about" onClick={handleClose}>
                                 <InfoIcon sx={{ mr: 1 }} fontSize="small" />
                                 About
                             </MenuItem>
-                            {currentUser.permissions?.isAdmin && ( // Check for admin permission
-                                <MenuItem
-                                    component={RouterLink}
-                                    to="/admin"
-                                    onClick={handleClose}
-                                >
+                            {currentUser.permissions?.isAdmin && (
+                                <MenuItem component={RouterLink} to="/admin" onClick={handleClose} >
                                     <AdminPanelSettingsIcon sx={{ mr: 1 }} fontSize="small" />
                                     Admin Panel
                                 </MenuItem>
                             )}
-                            <MenuItem onClick={handleLogout}>Logout ({currentUser.displayName || currentUser.email?.split('@')[0]})</MenuItem>
+                            <MenuItem onClick={handleLogout}>Logout</MenuItem>
                         </Menu>
                     </>
                 ) : (

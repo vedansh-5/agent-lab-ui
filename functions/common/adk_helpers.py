@@ -4,7 +4,7 @@ import os
 import importlib
 import traceback
 import asyncio # Import asyncio
-from .core import logger
+from .core import logger, db # Import db from core
 from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent # LlmAgent is aliased as Agent
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.models.lite_llm import LiteLlm
@@ -45,6 +45,48 @@ BACKEND_LITELLM_PROVIDER_CONFIG = {
     "azure": {"prefix": "azure", "apiKeyEnv": "AZURE_API_KEY"}, # Needs AZURE_API_BASE, AZURE_API_VERSION
     "custom": {"prefix": None, "apiKeyEnv": None} # No prefix, user provides full string
 }
+
+
+
+def generate_vertex_deployment_display_name(agent_config_name: str, agent_doc_id: str) -> str:
+    base_name = agent_config_name or f"adk-agent-{agent_doc_id}"
+    # Vertex AI display names must be 4-63 chars, start with letter, contain only lowercase letters, numbers, hyphens.
+    sanitized_base = re.sub(r'[^a-z0-9-]+', '-', base_name.lower()).strip('-')
+    if not sanitized_base: # If name was all invalid chars
+        sanitized_base = f"agent-{agent_doc_id[:8]}" # Fallback using doc ID part
+
+    # Ensure starts with a letter
+    if not sanitized_base[0].isalpha():
+        # Vertex display names must start with a letter.
+        # Max length is 63. If prepending 'a-' makes it too long, truncate from the end of core_name.
+        core_name = sanitized_base[:59] # Max 59 to allow for 'a-' prefix and ensure it's not too long
+        deployment_display_name = f"a-{core_name}"
+    else:
+        deployment_display_name = sanitized_base
+
+        # Ensure minimum length of 4 (Vertex requirement)
+    # Ensure final length is within 63 characters
+    deployment_display_name = deployment_display_name[:63]
+    while len(deployment_display_name) < 4 and len(deployment_display_name) < 63 : # Check max length again here
+        deployment_display_name += "x" # Pad if too short
+
+    return deployment_display_name.strip('-')[:63] # Final strip and length check
+
+async def get_model_config_from_firestore(model_id: str) -> dict:
+    """Fetches a model configuration document from Firestore."""
+    if not model_id:
+        raise ValueError("model_id cannot be empty.")
+    try:
+        model_ref = db.collection("models").document(model_id)
+        model_doc = model_ref.get()
+        if not model_doc.exists:
+            raise ValueError(f"Model with ID '{model_id}' not found in Firestore.")
+        return model_doc.to_dict()
+    except Exception as e:
+        logger.error(f"Error fetching model config for ID '{model_id}' from Firestore: {e}")
+        # Re-raise as a ValueError to be handled by the calling function
+        raise ValueError(f"Could not fetch model configuration for ID '{model_id}'.")
+
 
 def _create_mcp_auth_objects(auth_config: dict | None) -> tuple[AuthScheme | None, AuthCredential | None]:
     """
@@ -94,12 +136,12 @@ def _create_mcp_auth_objects(auth_config: dict | None) -> tuple[AuthScheme | Non
         logger.error(f"Error creating MCP auth objects for config {auth_config}: {e}")
         return None, None
 
-async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, context_for_log: str = ""): # Made async
-    logger.info(f"Preparing kwargs for ADK agent '{adk_agent_name}' {context_for_log}. Original config name: '{agent_config.get('name', 'N/A')}'")
+async def _prepare_agent_kwargs_from_config(merged_agent_and_model_config, adk_agent_name: str, context_for_log: str = ""): # Made async
+    logger.info(f"Preparing kwargs for ADK agent '{adk_agent_name}' {context_for_log}. Original config name: '{merged_agent_and_model_config.get('name', 'N/A')}'")
 
     instantiated_tools = []
     mcp_tools_by_server_and_auth = {}
-    user_defined_tools_config = agent_config.get("tools", [])
+    user_defined_tools_config = merged_agent_and_model_config.get("tools", [])
     logger.info(f"user_defined_tools_config for agent '{adk_agent_name}': {user_defined_tools_config}")
     for tc_idx, tc in enumerate(user_defined_tools_config):
         tool_type = tc.get('type')
@@ -169,27 +211,21 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
             logger.error(f"Failed to create MCPToolset for server '{server_url}' for agent '{adk_agent_name}': {type(e_mcp_toolset).__name__} - {e_mcp_toolset}")
 
 
-    selected_provider_id = agent_config.get("selectedProviderId")
-    base_model_name_from_config = agent_config.get("litellm_model_string")
-    user_api_base_override = agent_config.get("litellm_api_base")
-    user_api_key_override = agent_config.get("litellm_api_key")
+    selected_provider_id = merged_agent_and_model_config.get("provider")
+    base_model_name_from_config = merged_agent_and_model_config.get("modelString")
+    user_api_base_override = merged_agent_and_model_config.get("litellm_api_base")
+    user_api_key_override = merged_agent_and_model_config.get("litellm_api_key")
 
     if not selected_provider_id:
-        logger.warn(f"Missing 'selectedProviderId' in agent config '{agent_config.get('name', 'N/A')}' {context_for_log}. This is unexpected. Attempting fallback inference.")
-        if base_model_name_from_config:
-            if "gpt" in base_model_name_from_config.lower(): selected_provider_id = "openai"
-            elif "gemini" in base_model_name_from_config.lower(): selected_provider_id = "google_ai_studio"
-            elif "claude" in base_model_name_from_config.lower(): selected_provider_id = "anthropic"
-        if not selected_provider_id :
-            selected_provider_id = "custom"
-            logger.warn(f"Could not infer provider. Defaulting to '{selected_provider_id}'. Model string '{base_model_name_from_config}' will be used as is.")
+        logger.error(f"Missing 'provider' in model config for agent '{merged_agent_and_model_config.get('name', 'N/A')}' {context_for_log}.")
+        raise ValueError("Model config is missing 'provider' field.")
 
-    if not base_model_name_from_config and selected_provider_id != "custom" and selected_provider_id != "openai_compatible":
-        logger.warn(f"Missing 'litellm_model_string' for provider '{selected_provider_id}'. This may lead to errors.")
+    if not base_model_name_from_config:
+        logger.warn(f"Missing 'modelString' for provider '{selected_provider_id}'. This may lead to errors.")
 
     provider_backend_config = BACKEND_LITELLM_PROVIDER_CONFIG.get(selected_provider_id)
     if not provider_backend_config:
-        logger.error(f"Invalid 'selectedProviderId': {selected_provider_id}. Cannot determine LiteLLM prefix or API key for agent '{adk_agent_name}'.")
+        logger.error(f"Invalid 'provider': {selected_provider_id}. Cannot determine LiteLLM prefix or API key for agent '{adk_agent_name}'.")
         raise ValueError(f"Invalid provider ID: {selected_provider_id}")
 
     final_model_str_for_litellm = base_model_name_from_config
@@ -216,7 +252,7 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
     if selected_provider_id == "watsonx":
         if not os.getenv("WATSONX_URL") and not final_api_base:
             logger.error("WatsonX provider: WATSONX_URL env var not set and not overridden by user. LiteLLM will likely fail.")
-        if not os.getenv("WATSONX_PROJECT_ID") and not agent_config.get("project_id"): # project_id can be in config or env
+        if not os.getenv("WATSONX_PROJECT_ID") and not merged_agent_and_model_config.get("project_id"): # project_id can be in config or env
             logger.warn("WatsonX provider: WATSONX_PROJECT_ID env var not set and no project_id in agent_config. LiteLLM may require it.")
 
 
@@ -232,7 +268,7 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
 
         # Specific handling for WatsonX project_id and space_id
     if selected_provider_id == "watsonx":
-        project_id_for_watsonx = agent_config.get("project_id") or os.getenv("WATSONX_PROJECT_ID")
+        project_id_for_watsonx = merged_agent_and_model_config.get("project_id") or os.getenv("WATSONX_PROJECT_ID")
         if project_id_for_watsonx:
             model_constructor_kwargs["project_id"] = project_id_for_watsonx
         else:
@@ -240,7 +276,7 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
             logger.warn(f"WatsonX project_id not found for agent {adk_agent_name}. This might be required by LiteLLM.")
             # space_id for watsonx deployments
         if base_model_name_from_config and base_model_name_from_config.startswith("deployment/"): # Heuristic for deployment models
-            space_id_for_watsonx = agent_config.get("space_id") or os.getenv("WATSONX_DEPLOYMENT_SPACE_ID")
+            space_id_for_watsonx = merged_agent_and_model_config.get("space_id") or os.getenv("WATSONX_DEPLOYMENT_SPACE_ID")
             if space_id_for_watsonx:
                 model_constructor_kwargs["space_id"] = space_id_for_watsonx
             else:
@@ -251,64 +287,41 @@ async def _prepare_agent_kwargs_from_config(agent_config, adk_agent_name: str, c
 
     agent_kwargs = {
         "name": adk_agent_name,
-        "description": agent_config.get("description"),
+        "description": merged_agent_and_model_config.get("description"),
         "model": actual_model_for_adk,
-        "instruction": agent_config.get("instruction"),
+        "instruction": merged_agent_and_model_config.get("systemInstruction"),
         "tools": instantiated_tools,
-        "output_key": agent_config.get("outputKey"),
+        "output_key": merged_agent_and_model_config.get("outputKey"),
     }
 
-    model_settings = agent_config.get("modelSettings", {})
-    current_generate_content_config_kwargs = {} # For ADK Agent's direct model params
+    # --- Collect parameters for GenerateContentConfig ---
+    model_params = merged_agent_and_model_config
+    generate_config_kwargs = {}
 
-    if "temperature" in model_settings and model_settings["temperature"] is not None:
-        try: agent_kwargs["temperature"] = float(model_settings["temperature"])
-        except (ValueError, TypeError): logger.warn(f"Invalid temperature: {model_settings['temperature']}")
-    if "maxOutputTokens" in model_settings and model_settings["maxOutputTokens"] is not None:
-        try: agent_kwargs["max_tokens"] = int(model_settings["maxOutputTokens"]) # Renamed to max_tokens for ADK Agent
-        except (ValueError, TypeError): logger.warn(f"Invalid maxOutputTokens: {model_settings['maxOutputTokens']}")
-    if "topP" in model_settings and model_settings["topP"] is not None:
-        try: current_generate_content_config_kwargs["top_p"] = float(model_settings["topP"])
-        except (ValueError, TypeError): logger.warn(f"Invalid topP: {model_settings['topP']}")
-    if "topK" in model_settings and model_settings["topK"] is not None:
-        try: current_generate_content_config_kwargs["top_k"] = int(model_settings["topK"])
-        except (ValueError, TypeError): logger.warn(f"Invalid topK: {model_settings['topK']}")
-    if "stopSequences" in model_settings and isinstance(model_settings["stopSequences"], list):
-        current_generate_content_config_kwargs["stop_sequences"] = [str(seq) for seq in model_settings["stopSequences"]]
+    if "temperature" in model_params and model_params["temperature"] is not None:
+        try: generate_config_kwargs["temperature"] = float(model_params["temperature"])
+        except (ValueError, TypeError): logger.warn(f"Invalid temperature: {model_params['temperature']}")
 
-    if current_generate_content_config_kwargs:
-        # These are passed as direct kwargs to the ADK Agent constructor if supported,
-        # or used to construct a GenerateContentConfig if the agent model expects that.
-        # LiteLlm model wrapper in ADK might pick these up if passed to Agent.
-        agent_kwargs.update(current_generate_content_config_kwargs)
-        logger.info(f"Agent '{adk_agent_name}' has additional model parameters: {current_generate_content_config_kwargs}")
+    # NOTE: The ADK expects 'max_output_tokens' inside GenerateContentConfig, not 'max_tokens' as a direct kwarg.
+    if "maxOutputTokens" in model_params and model_params["maxOutputTokens"] is not None:
+        try: generate_config_kwargs["max_output_tokens"] = int(model_params["maxOutputTokens"])
+        except (ValueError, TypeError): logger.warn(f"Invalid maxOutputTokens: {model_params['maxOutputTokens']}")
 
+    if "topP" in model_params and model_params["topP"] is not None:
+        try: generate_config_kwargs["top_p"] = float(model_params["topP"])
+        except (ValueError, TypeError): logger.warn(f"Invalid topP: {model_params['topP']}")
+
+    if "topK" in model_params and model_params["topK"] is not None:
+        try: generate_config_kwargs["top_k"] = int(model_params["topK"])
+        except (ValueError, TypeError): logger.warn(f"Invalid topK: {model_params['topK']}")
+
+    if "stopSequences" in model_params and isinstance(model_params["stopSequences"], list):
+        generate_config_kwargs["stop_sequences"] = [str(seq) for seq in model_params["stopSequences"]]
+    if generate_config_kwargs:
+        logger.info(f"Agent '{adk_agent_name}' has model generation parameters: {generate_config_kwargs}")
+        agent_kwargs["generate_content_config"] = genai_types.GenerateContentConfig(**generate_config_kwargs)
 
     return {k: v for k, v in agent_kwargs.items() if v is not None}
-
-def generate_vertex_deployment_display_name(agent_config_name: str, agent_doc_id: str) -> str:
-    base_name = agent_config_name or f"adk-agent-{agent_doc_id}"
-    # Vertex AI display names must be 4-63 chars, start with letter, contain only lowercase letters, numbers, hyphens.
-    sanitized_base = re.sub(r'[^a-z0-9-]+', '-', base_name.lower()).strip('-')
-    if not sanitized_base: # If name was all invalid chars
-        sanitized_base = f"agent-{agent_doc_id[:8]}" # Fallback using doc ID part
-
-    # Ensure starts with a letter
-    if not sanitized_base[0].isalpha():
-        # Vertex display names must start with a letter.
-        # Max length is 63. If prepending 'a-' makes it too long, truncate from the end of core_name.
-        core_name = sanitized_base[:59] # Max 59 to allow for 'a-' prefix and ensure it's not too long
-        deployment_display_name = f"a-{core_name}"
-    else:
-        deployment_display_name = sanitized_base
-
-        # Ensure minimum length of 4 (Vertex requirement)
-    # Ensure final length is within 63 characters
-    deployment_display_name = deployment_display_name[:63]
-    while len(deployment_display_name) < 4 and len(deployment_display_name) < 63 : # Check max length again here
-        deployment_display_name += "x" # Pad if too short
-
-    return deployment_display_name.strip('-')[:63] # Final strip and length check
 
 def instantiate_tool(tool_config):
     logger.info(f"Attempting to instantiate Gofannon/Custom tool: {tool_config.get('id', 'N/A')}")
@@ -411,24 +424,75 @@ async def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_co
 
     logger.info(f"Instantiating ADK Agent: Name='{adk_agent_name}', Type='{AgentClass.__name__}', Original Config Name='{original_agent_name}' (Context: parent='{parent_adk_name_for_context}', index={child_index})")
 
-    if AgentClass == Agent: # LlmAgent
-        agent_kwargs = await _prepare_agent_kwargs_from_config( # Await the async call
-            agent_config,
-            adk_agent_name,
-            context_for_log=f"(type: LlmAgent, parent: {parent_adk_name_for_context}, original: {original_agent_name})"
-        )
-        tool_count = len(agent_kwargs.get("tools", []))
-        logger.info(f"Final kwargs for LlmAgent '{adk_agent_name}' includes {tool_count} tools")
+    if AgentClass in [Agent, LoopAgent]:
+        model_id = agent_config.get("modelId")
+        if not model_id:
+            raise ValueError(f"Agent '{original_agent_name}' is of type {agent_type_str} but is missing required 'modelId'.")
 
-        try:
-            return Agent(**agent_kwargs)
-        except Exception as e_agent_init:
-            logger.error(f"Initialization Error for LlmAgent '{adk_agent_name}' (from config '{original_agent_name}'): {e_agent_init}")
-            logger.error(f"Args passed: {agent_kwargs}") # Log the arguments that caused the error
-            detailed_traceback = traceback.format_exc()
-            logger.error(f"Traceback:\n{detailed_traceback}")
-            raise ValueError(f"Failed to instantiate LlmAgent '{original_agent_name}': {e_agent_init}.")
+            # Fetch the model configuration from Firestore
+        model_config = await get_model_config_from_firestore(model_id)
 
+        # Merge agent-specific properties (like tools, outputKey) with the model's properties.
+        # Agent properties take precedence.
+        merged_config = {**model_config, **agent_config}
+
+        if AgentClass == Agent:
+            agent_kwargs = await _prepare_agent_kwargs_from_config(
+                merged_config,
+                adk_agent_name,
+                context_for_log=f"(type: LlmAgent, parent: {parent_adk_name_for_context}, original: {original_agent_name})"
+            )
+            tool_count = len(agent_kwargs.get("tools", []))
+            logger.info(f"Final kwargs for LlmAgent '{adk_agent_name}' includes {tool_count} tools")
+
+            try:
+                return Agent(**agent_kwargs)
+            except Exception as e_agent_init:
+                logger.error(f"Initialization Error for LlmAgent '{adk_agent_name}' (from config '{original_agent_name}'): {e_agent_init}")
+                logger.error(f"Args passed: {agent_kwargs}") # Log the arguments that caused the error
+                detailed_traceback = traceback.format_exc()
+                logger.error(f"Traceback:\n{detailed_traceback}")
+                raise ValueError(f"Failed to instantiate LlmAgent '{original_agent_name}': {e_agent_init}.")
+
+        elif AgentClass == LoopAgent:
+            looped_agent_config_name = f"{original_agent_name}_looped_child_config" # For logging
+            looped_agent_adk_name = sanitize_adk_agent_name(f"{adk_agent_name}_looped_child_instance", prefix_if_needed="looped_")
+
+            looped_agent_kwargs = await _prepare_agent_kwargs_from_config( # Await the async call
+                merged_config, # Pass the merged config
+                looped_agent_adk_name,
+                context_for_log=f"(looped child of LoopAgent '{adk_agent_name}', original config: '{looped_agent_config_name}')"
+            )
+            logger.debug(f"Final kwargs for Looped Child ADK Agent '{looped_agent_adk_name}' (for LoopAgent '{adk_agent_name}'): {looped_agent_kwargs}")
+            try:
+                looped_child_agent_instance = Agent(**looped_agent_kwargs) # Agent is LlmAgent
+            except Exception as e_loop_child_init:
+                logger.error(f"Initialization Error for Looped Child Agent '{looped_agent_adk_name}' (from config '{looped_agent_config_name}'): {e_loop_child_init}")
+                logger.error(f"Args passed to looped child Agent constructor: {looped_agent_kwargs}")
+                detailed_traceback = traceback.format_exc()
+                logger.error(f"Traceback:\n{detailed_traceback}")
+                raise ValueError(f"Failed to instantiate looped child agent for '{original_agent_name}': {e_loop_child_init}.")
+
+            max_loops_val_str = agent_config.get("maxLoops", "3") # Default to 3 loops
+            try:
+                max_loops_val = int(max_loops_val_str)
+                if max_loops_val <= 0: # Max loops must be positive
+                    logger.warning(f"MaxLoops for LoopAgent '{adk_agent_name}' is {max_loops_val}, which is not positive. Defaulting to 3.")
+                    max_loops_val = 3
+            except ValueError:
+                logger.warning(f"Invalid MaxLoops value '{max_loops_val_str}' for LoopAgent '{adk_agent_name}'. Defaulting to 3.")
+                max_loops_val = 3
+
+
+            loop_agent_kwargs = {
+                "name": adk_agent_name,
+                "description": agent_config.get("description"),
+                "agent": looped_child_agent_instance, # The LlmAgent to loop
+                "max_loops": max_loops_val
+                # Potentially other LoopAgent specific params like "stopping_condition" if supported/configured
+            }
+            logger.debug(f"Final kwargs for LoopAgent '{adk_agent_name}': {{name, description, max_loops, agent_name: {looped_child_agent_instance.name}}}")
+            return LoopAgent(**loop_agent_kwargs)
 
     elif AgentClass == SequentialAgent or AgentClass == ParallelAgent:
         child_agent_configs = agent_config.get("childAgents", [])
@@ -439,14 +503,6 @@ async def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_co
             instantiated_child_agents = []
             for idx, child_config in enumerate(child_agent_configs):
                 try:
-                    # Basic validation/defaulting for child agent configs if necessary
-                    if 'selectedProviderId' not in child_config: # Example default
-                        logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'selectedProviderId'. Defaulting to OpenAI (example).")
-                        child_config['selectedProviderId'] = "openai" # Or a more sensible default
-                    if 'litellm_model_string' not in child_config:
-                        logger.warn(f"Child agent config for '{child_config.get('name', 'N/A')}' (index {idx}) is missing 'litellm_model_string'. Defaulting to gpt-3.5-turbo (example).")
-                        child_config['litellm_model_string'] = "gpt-3.5-turbo" # Example default
-
                     child_agent_instance = await instantiate_adk_agent_from_config( # Await the recursive async call
                         child_config,
                         parent_adk_name_for_context=adk_agent_name, # Pass current agent's ADK name as context
@@ -465,48 +521,6 @@ async def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_co
         }
         logger.debug(f"Final kwargs for {AgentClass.__name__} '{adk_agent_name}': {{name, description, num_sub_agents: {len(instantiated_child_agents)}}}")
         return AgentClass(**orchestrator_kwargs)
-
-    elif AgentClass == LoopAgent:
-        # LoopAgent wraps a single LlmAgent (defined by the LoopAgent's own config fields)
-        looped_agent_config_name = f"{original_agent_name}_looped_child_config" # For logging
-        looped_agent_adk_name = sanitize_adk_agent_name(f"{adk_agent_name}_looped_child_instance", prefix_if_needed="looped_")
-
-        # The LoopAgent's main config (instruction, model, tools) defines the agent to be looped.
-        looped_agent_kwargs = await _prepare_agent_kwargs_from_config( # Await the async call
-            agent_config, # Pass the main agent_config, as LoopAgent's own config defines the looped agent
-            looped_agent_adk_name,
-            context_for_log=f"(looped child of LoopAgent '{adk_agent_name}', original config: '{looped_agent_config_name}')"
-        )
-        logger.debug(f"Final kwargs for Looped Child ADK Agent '{looped_agent_adk_name}' (for LoopAgent '{adk_agent_name}'): {looped_agent_kwargs}")
-        try:
-            looped_child_agent_instance = Agent(**looped_agent_kwargs) # Agent is LlmAgent
-        except Exception as e_loop_child_init:
-            logger.error(f"Initialization Error for Looped Child Agent '{looped_agent_adk_name}' (from config '{looped_agent_config_name}'): {e_loop_child_init}")
-            logger.error(f"Args passed to looped child Agent constructor: {looped_agent_kwargs}")
-            detailed_traceback = traceback.format_exc()
-            logger.error(f"Traceback:\n{detailed_traceback}")
-            raise ValueError(f"Failed to instantiate looped child agent for '{original_agent_name}': {e_loop_child_init}.")
-
-        max_loops_val_str = agent_config.get("maxLoops", "3") # Default to 3 loops
-        try:
-            max_loops_val = int(max_loops_val_str)
-            if max_loops_val <= 0: # Max loops must be positive
-                logger.warning(f"MaxLoops for LoopAgent '{adk_agent_name}' is {max_loops_val}, which is not positive. Defaulting to 3.")
-                max_loops_val = 3
-        except ValueError:
-            logger.warning(f"Invalid MaxLoops value '{max_loops_val_str}' for LoopAgent '{adk_agent_name}'. Defaulting to 3.")
-            max_loops_val = 3
-
-
-        loop_agent_kwargs = {
-            "name": adk_agent_name,
-            "description": agent_config.get("description"),
-            "agent": looped_child_agent_instance, # The LlmAgent to loop
-            "max_loops": max_loops_val
-            # Potentially other LoopAgent specific params like "stopping_condition" if supported/configured
-        }
-        logger.debug(f"Final kwargs for LoopAgent '{adk_agent_name}': {{name, description, max_loops, agent_name: {looped_child_agent_instance.name}}}")
-        return LoopAgent(**loop_agent_kwargs)
 
     else:
         # This case should be caught by the AgentClass check at the beginning
