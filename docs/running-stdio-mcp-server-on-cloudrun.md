@@ -35,7 +35,7 @@ gcloud run deploy maps-mcp-server \
 --region=us-central1 \
 --image docker.io/supercorp/supergateway \
 --args="--stdio","npx -y @modelcontextprotocol/server-google-maps","--outputTransport","streamableHttp","--port","8080","--cors","--baseUrl","http://0.0.0.0:8080","--healthEndpoint","/healthz" \
---set-env-vars "GOOGLE_MAPS_API_KEY=AIzaSyCX7Ae3Csa1RBvGrJEzXl9r8LRg-CksuUY"
+--set-env-vars "GOOGLE_MAPS_API_KEY=<your-maps-api-key>"
 ```
 
 ### Explanation
