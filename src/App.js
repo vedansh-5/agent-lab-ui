@@ -10,7 +10,6 @@ import HomePage from './pages/HomePage';
 import AgentsPage from './pages/AgentsPage';
 import CreateAgentPage from './pages/CreateAgentPage';
 import AgentDetailsPage from './pages/AgentDetailsPage';
-import AgentPage from './pages/AgentsPage';
 import SettingsPage from './pages/SettingsPage';
 import ProtectedRoute from './components/routing/ProtectedRoute';
 import AdminPage from './pages/AdminPage';

@@ -2,10 +2,17 @@
 import asyncio
 import traceback
 import json
+import uuid  # Import uuid to generate message IDs
+from datetime import datetime, timezone
+from google.cloud import tasks_v2
+
 from firebase_admin import firestore
+from firebase_functions import https_fn
+
 from common.core import db, logger
 from common.config import get_gcp_project_config
-from common.adk_helpers import instantiate_adk_agent_from_config
+from common.utils import initialize_vertex_ai
+from common.adk_helpers import get_model_config_from_firestore
 
 # NEW import for A2A client logic
 import httpx
@@ -17,7 +24,6 @@ from .query_log_fetcher import fetch_vertex_logs_for_query
 from .query_session_manager import ensure_adk_session
 from .query_vertex_runner import run_vertex_stream_query
 from .query_local_diagnostics import try_local_diagnostic_run
-from datetime import datetime, timezone
 from vertexai.agent_engines import get as get_engine
 from google.adk.sessions import VertexAiSessionService
 
@@ -50,8 +56,6 @@ async def _run_a2a_agent_and_stream(
         raise ValueError("A2A agent config is missing 'endpointUrl'.")
 
         # 1. Construct the message payload for the A2A agent
-    # The A2A protocol expects a list of turns. We'll simplify and send the last user message.
-    # A more advanced implementation could map the entire history.
     last_user_message = next((msg for msg in reversed(conversation_history) if msg.get("participant", "").startswith("user:")), None)
 
     if not last_user_message or not last_user_message.get("content"):
@@ -60,56 +64,68 @@ async def _run_a2a_agent_and_stream(
     else:
         a2a_message_content = last_user_message.get("content")
 
-    a2a_message = A2AMessage(parts=[TextPart(text=a2a_message_content)])
+        # FIX 1: Construct the A2AMessage with all required fields (role, messageId).
+    a2a_message = A2AMessage(
+        messageId=str(uuid.uuid4()),
+        role="user",
+        parts=[TextPart(text=a2a_message_content)]
+    )
 
-    # 2. POST to create the task
-    create_task_url = f"{endpoint_url.rstrip('/')}/v1/tasks"
+    # FIX 2: Construct the full JSON-RPC request payload for the 'message/stream' method.
+    rpc_request_payload = {
+        "jsonrpc": "2.0",
+        "method": "message/stream",
+        "id": f"agentlab-stream-{uuid.uuid4().hex}",
+        "params": {
+            "message": a2a_message.model_dump(exclude_none=True)
+        }
+    }
+
     errors = []
     final_text = ""
+    rpc_endpoint_url = endpoint_url.rstrip('/')
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         try:
-            logger.info(f"[A2AExecutor] Creating task at {create_task_url}")
-            # The A2A client library might simplify this, but direct httpx is clear
-            create_task_response = await client.post(create_task_url, json={"message": a2a_message.model_dump()})
-            create_task_response.raise_for_status()
-            task_data = create_task_response.json()
-            task_id = task_data.get("id")
-            if not task_id:
-                raise ValueError("A2A server response did not include a task ID.")
+            logger.info(f"[A2AExecutor] Sending 'message/stream' RPC to {rpc_endpoint_url}")
 
-            logger.info(f"[A2AExecutor] Task {task_id} created. Opening event stream.")
-
-            # 3. Open SSE connection to events endpoint
-            events_url = f"{endpoint_url.rstrip('/')}/v1/tasks/{task_id}/events"
-
-            # Using httpx for SSE
-            async with client.stream("GET", events_url, headers={"Accept": "text/event-stream"}) as response:
+            # Use client.stream with a POST request to handle the SSE response.
+            async with client.stream("POST", rpc_endpoint_url, json=rpc_request_payload, headers={"Accept": "text/event-stream"}) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line.startswith("data:"):
                         try:
                             event_json = line[len("data:"):].strip()
-                            event_data = json.loads(event_json)
+                            rpc_response = json.loads(event_json)
 
-                            # Convert A2A event to a simplified ADK-like event for Firestore
+                            event_data = rpc_response.get("result", {})
+                            if not event_data:
+                                if rpc_response.get("error"):
+                                    err_msg = f"A2A stream returned an error: {rpc_response['error']}"
+                                    logger.error(f"[A2AExecutor] {err_msg}")
+                                    errors.append(err_msg)
+                                continue
+
                             adk_like_event = {"type": "a2a_event", "source_event": event_data}
                             assistant_message_ref.update({"run.outputEvents": firestore.ArrayUnion([adk_like_event])})
 
-                            # Process event for final text and errors
-                            if event_data.get("type") == "agent.artifact.update" and event_data.get("artifact"):
+                            event_kind = event_data.get("kind")
+                            is_final_event = event_data.get("final", False)
+
+                            if event_kind == "artifact-update" and event_data.get("artifact"):
                                 for part in event_data["artifact"].get("parts", []):
                                     if part.get("text"):
                                         final_text += part["text"]
 
-                            if event_data.get("type") == "task.update" and event_data["task"].get("state") == "failed":
-                                error_detail = event_data["task"].get("error", {}).get("message", "Unknown error from A2A agent.")
-                                errors.append(f"A2A agent task failed: {error_detail}")
-                                break # Stop processing on failure
+                            if event_kind == "status-update" and event_data.get("status"):
+                                task_state = event_data["status"].get("state")
+                                if task_state == "failed":
+                                    error_detail = event_data["status"].get("message", "Unknown error from A2A agent.")
+                                    errors.append(f"A2A agent task failed: {error_detail}")
 
-                            if event_data.get("type") == "task.update" and event_data["task"].get("state") == "completed":
-                                logger.info(f"[A2AExecutor] Received task completion event for {task_id}.")
-                                break # Stop processing on completion
+                            if is_final_event:
+                                logger.info(f"[A2AExecutor] Received final event from stream.")
+                                break
 
                         except json.JSONDecodeError:
                             logger.warn(f"[A2AExecutor] Could not decode JSON from event line: {line}")
