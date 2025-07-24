@@ -7,7 +7,7 @@ const executeQueryCallable = createCallable('executeQuery'); // Renamed
 const deleteVertexAgentCallable = createCallable('delete_vertex_agent');
 const checkVertexAgentDeploymentStatusCallable = createCallable('check_vertex_agent_deployment_status');
 const listMcpServerToolsCallable = createCallable('list_mcp_server_tools');
-
+const fetchA2AAgentCardCallable = createCallable('fetchA2AAgentCard');
 
 export const fetchGofannonTools = async () => {
     try {
@@ -48,6 +48,16 @@ export const listMcpServerTools = async (serverUrl, auth) => {
             return { success: false, message: `Authentication failed for ${serverUrl}. Please check your credentials.` };
         }
         return { success: false, message: message, serverUrl: serverUrl };
+    }
+};
+
+export const fetchA2AAgentCard = async (endpointUrl) => {
+    try {
+       const result = await fetchA2AAgentCardCallable({ endpointUrl });
+        return result.data; // Expected: { success: true, agentCard: { ... } } or { success: false, message: string }
+    } catch (error) {
+        console.error("Error calling fetchA2AAgentCard callable:", error);
+        throw error; // Re-throw to be caught by UI
     }
 };
 

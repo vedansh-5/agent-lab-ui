@@ -37,8 +37,9 @@ const getStatusChipColor = (status) => {
     }
 };
 
-const canDeleteAgentConfig = (status, isOwnerOrAdmin) => {
-    if (!isOwnerOrAdmin) return false; // Non-owners/admins cannot delete
+const canDeleteAgentConfig = (status, isOwnerOrAdmin, platform) => {
+    if (!isOwnerOrAdmin) return false;
+    if (platform === 'a2a') return true;
     const nonDeletableStatuses = ['deployed', 'deploying_initiated', 'deploying_in_progress'];
     return !status || !nonDeletableStatuses.includes(status);
 };
@@ -51,7 +52,14 @@ const AgentListItem = ({ agent, onDeleteAgentConfig }) => {
     const isAdmin = currentUser && currentUser.permissions?.isAdmin;
     const canManage = isOwner || isAdmin; // For Edit/Delete
 
-    const showDeleteButton = canDeleteAgentConfig(agent.deploymentStatus, canManage);
+    const showDeleteButton = canDeleteAgentConfig(agent.deploymentStatus, canManage, agent.platform);
+
+    const getEditLink = () => {
+        if (agent.platform === 'a2a') {
+                return `/agent/${agent.id}/edit-a2a`;
+            }
+        return `/agent/${agent.id}/edit`;
+    };
 
 
     return (
@@ -61,12 +69,14 @@ const AgentListItem = ({ agent, onDeleteAgentConfig }) => {
                     {agent.name}
                 </Typography>
                 <Box sx={{ mb: 1, display: 'flex', gap: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <Chip
-                        label={agent.deploymentStatus?.replace(/_/g, ' ') || 'Not Deployed'}
-                        color={getStatusChipColor(agent.deploymentStatus)}
-                        size="small"
-                        sx={{ lineHeight: '1.3' }}
-                    />
+                    {agent.platform !== 'a2a' && (
+                        <Chip
+                            label={agent.deploymentStatus?.replace(/_/g, ' ') || 'Not Deployed'}
+                            color={getStatusChipColor(agent.deploymentStatus)}
+                            size="small"
+                            sx={{ lineHeight: '1.3' }}
+                        />
+                    )}
                     {platformInfo && (
                         <Chip
                             label={platformInfo.name}
@@ -90,8 +100,11 @@ const AgentListItem = ({ agent, onDeleteAgentConfig }) => {
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                     Type: <Typography component="span" fontWeight="medium">{agent.agentType || 'Agent'}</Typography>
                 </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5,  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={agent.litellm_model_string || 'N/A'}>
-                    Model: <Typography component="span" fontWeight="medium">{agent.litellm_model_string || 'N/A (LiteLLM)'}</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5,  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={agent.litellm_model_string || agent.endpointUrl || 'N/A'}>
+                   {agent.platform === 'a2a' ? 'Endpoint: ' : 'Model: '}
+                   <Typography component="span" fontWeight="medium">
+                       {agent.platform === 'a2a' ? (agent.endpointUrl || 'N/A') : (agent.litellm_model_string || 'N/A (LiteLLM)')}
+                   </Typography>
                 </Typography>
                 <Typography variant="caption" color="text.secondary" display="block" sx={{fontSize: '0.7rem'}}>
                     Owner: {agent.userId === currentUser?.uid ? "You" : agent.userId?.substring(0,8)+'...'}
@@ -112,7 +125,7 @@ const AgentListItem = ({ agent, onDeleteAgentConfig }) => {
                         variant="outlined"
                         color="secondary"
                         component={RouterLink}
-                        to={`/agent/${agent.id}/edit`}
+                        to={getEditLink()}
                         startIcon={<EditIcon />}
                     >
                         Edit

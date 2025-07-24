@@ -9,7 +9,7 @@ import Navbar from './components/layout/Navbar';
 import HomePage from './pages/HomePage';
 import AgentsPage from './pages/AgentsPage';
 import CreateAgentPage from './pages/CreateAgentPage';
-import AgentPage from './pages/AgentsPage';
+import AgentDetailsPage from './pages/AgentDetailsPage';
 import SettingsPage from './pages/SettingsPage';
 import ProtectedRoute from './components/routing/ProtectedRoute';
 import AdminPage from './pages/AdminPage';
@@ -31,6 +31,7 @@ import CreateModelPage from './pages/CreateModelPage';
 import ModelDetailsPage from './pages/ModelDetailsPage';
 import ChatPage from './pages/ChatPage';
 import ToolsPage from './pages/ToolsPage';
+import ImportA2AAgentPage from './pages/ImportA2AAgentPage';
 
 // Helper function to update meta tags
 const updateMetaTagContent = (metaId, content) => {
@@ -139,8 +140,11 @@ function AppContent() {
 
                     <Route path="/agents" element={<ProtectedRoute><AgentsPage /></ProtectedRoute>} />
                     <Route path="/create-agent" element={<ProtectedRoute><CreateAgentPage /></ProtectedRoute>} />
-                    <Route path="/agent/:agentId" element={<ProtectedRoute><AgentPage /></ProtectedRoute>} />
+                    <Route path="/agent/:agentId" element={<ProtectedRoute><AgentDetailsPage /></ProtectedRoute>} />
                     <Route path="/agent/:agentId/edit" element={<ProtectedRoute><CreateAgentPage isEditMode={true} /></ProtectedRoute>} />
+
+                    <Route path="/import-a2a-agent" element={<ProtectedRoute><ImportA2AAgentPage /></ProtectedRoute>} />
+                    <Route path="/agent/:agentId/edit-a2a" element={<ProtectedRoute><ImportA2AAgentPage isEditMode={true} /></ProtectedRoute>} />
 
                     <Route path="/chat/:chatId" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
 
