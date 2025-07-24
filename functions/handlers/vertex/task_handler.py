@@ -12,7 +12,7 @@ from firebase_functions import https_fn
 from common.core import db, logger
 from common.config import get_gcp_project_config
 from common.utils import initialize_vertex_ai
-from common.adk_helpers import get_model_config_from_firestore
+from common.adk_helpers import instantiate_adk_agent_from_config
 
 # NEW import for A2A client logic
 import httpx
@@ -26,6 +26,9 @@ from .query_vertex_runner import run_vertex_stream_query
 from .query_local_diagnostics import try_local_diagnostic_run
 from vertexai.agent_engines import get as get_engine
 from google.adk.sessions import VertexAiSessionService
+
+
+
 
 async def get_full_message_history(chat_id, leaf_message_id):
     """Reconstructs the conversation history leading up to a specific message."""
