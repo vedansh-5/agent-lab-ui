@@ -28,6 +28,7 @@ def get_agent_card(host: str, port: int, app_url_override: str | None) -> AgentC
         # This environment variable is automatically set by Cloud Run.
         if app_url_override == "auto":
             service_url = os.getenv("SERVICE_URL", f"http://{host}:{port}/")
+            logger.info(f"service_url is set to: {service_url}");
         else:
             service_url = app_url_override
     else:
@@ -70,6 +71,7 @@ def main(host: str, port: int | None, app_url_override: str | None):
         sys.exit(1)
 
     agent_card = get_agent_card(host, run_port, app_url_override)
+    logger.info(f"agent_card is set to: {agent_card}")
 
     request_handler = DefaultRequestHandler(
         agent_executor=SmolAgentExecutor(),

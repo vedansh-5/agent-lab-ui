@@ -137,6 +137,15 @@ Deploying to Cloud Run packages your code into a container and runs it in a mana
 
     After the deployment completes, `gcloud` will output the **Service URL**. You can use this URL with the A2A CLI client to interact with your deployed agent.
 
+    ```bash
+    export SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --platform managed --region $REGION --format 'value(status.url)')
+    gcloud run services update $SERVICE_NAME --set-env-vars SERVICE_URL=$SERVICE_URL
+    ```
+
+**NOTE:** This all isn't quite right. Someone should verify / update / open issues. All the steps are there, but I did them kind of out of order.
+
+You can use this URL with the A2A CLI client to interact with your deployed agent.
+
 ## Disclaimer
 
 Important: The sample code provided is for demonstration purposes and illustrates the mechanics of the Agent-to-Agent (A2A) protocol. When building production applications, it is critical to treat any agent operating outside of your direct control as a potentially untrusted entity.

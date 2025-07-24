@@ -39,4 +39,4 @@ COPY . .
 EXPOSE 8080
 
 # Command to run the application
-CMD ["uv", "run", ".", "--host", "0.0.0.0"]
+CMD uv run . --host 0.0.0.0 --app-url-override $APP_URL_OVERRIDE
