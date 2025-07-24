@@ -120,6 +120,7 @@ export const MODEL_PROVIDERS_LITELLM = [
             { id: "meta-llama/llama-3-1-8b-instruct", name: "Llama 3.1 8B Instruct (WatsonX)" },
             { id: "google/flan-t5-xxl", name: "Google Flan-T5 XXL (WatsonX)" },
             { id: "ibm/granite-13b-chat-v2", name: "IBM Granite 13B Chat v2 (WatsonX)" },
+            { id: "meta-llama/llama-4-maverick-17b-128e-instruct-fp8", name: "Llama 4 Maverick 17B 128E Instruct FP8 (WatsonX)" },
         ],
         customInstruction: "For IBM WatsonX, ensure WATSONX_URL and WATSONX_APIKEY (or WATSONX_TOKEN) are set in the backend or passed. Model String is the WatsonX model ID (e.g., google/flan-t5-xxl). Also requires WATSONX_PROJECT_ID."
     },

@@ -1,6 +1,6 @@
 // src/components/agents/AgentDetailsDisplay.js
 import React from 'react';
-import { Typography, Paper, List, ListItem, ListItemText, Box, Chip } from '@mui/material';
+import { Typography, Paper, List, ListItem, ListItemText, Chip } from '@mui/material';
 import LoopIcon from '@mui/icons-material/Loop';
 import { getPlatformById } from '../../constants/platformConstants';
 import { Link as RouterLink } from 'react-router-dom';
