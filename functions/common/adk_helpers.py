@@ -3,6 +3,7 @@ import re
 import os
 import importlib
 import traceback
+
 from .core import logger, db
 from google.adk.agents import Agent, SequentialAgent, LoopAgent, ParallelAgent # LlmAgent is aliased as Agent
 from google.adk.models.lite_llm import LiteLlm
@@ -13,7 +14,8 @@ from google.adk.tools.mcp_tool.mcp_session_manager import (
     StreamableHTTPConnectionParams,
     SseServerParams,
 )
-
+from google.adk.artifacts import GcsArtifactService
+from .config import get_gcp_project_config
 from google.adk.auth.auth_schemes import AuthScheme
 from google.adk.auth.auth_credential import AuthCredential, AuthCredentialTypes, HttpAuth, HttpCredentials
 from fastapi.openapi.models import APIKey, APIKeyIn, HTTPBearer
@@ -50,7 +52,7 @@ def generate_vertex_deployment_display_name(agent_config_name: str, agent_doc_id
         deployment_display_name = f"a-{core_name}"
     else:
         deployment_display_name = sanitized_base
-    # Ensure final length is within 63 characters
+        # Ensure final length is within 63 characters
     deployment_display_name = deployment_display_name[:63]
     while len(deployment_display_name) < 4 and len(deployment_display_name) < 63 : # Check max length again here
         deployment_display_name += "x" # Pad if too short
@@ -72,6 +74,24 @@ async def get_model_config_from_firestore(model_id: str) -> dict:
         # Re-raise as a ValueError to be handled by the calling function
         raise ValueError(f"Could not fetch model configuration for ID '{model_id}'.")
 
+
+async def get_adk_artifact_service() -> GcsArtifactService:
+    """
+    Initializes and returns a GCSArtifactService instance.
+    This can be shared across different runs within the same function invocation.
+    """
+    try:
+        project_id, _, _ = get_gcp_project_config()
+        # Bucket for ADK artifacts, separate from context uploads
+        bucket_name = f"{project_id}-adk-artifacts"
+        # The GcsArtifactService might create the bucket if it doesn't exist,
+        # but it's better to ensure it exists with correct permissions.
+        # For now, we assume it will be created or exists.
+        return GcsArtifactService(bucket_name=bucket_name)
+    except Exception as e:
+        logger.error(f"Failed to initialize GCSArtifactService: {e}")
+        # Depending on requirements, could fallback to InMemoryArtifactService or raise
+        raise ValueError("Could not create GCS Artifact Service for ADK.")
 
 def _create_mcp_auth_objects(auth_config: dict | None) -> tuple[AuthScheme | None, AuthCredential | None]:
     """
@@ -127,7 +147,7 @@ async def _prepare_agent_kwargs_from_config(merged_agent_and_model_config, adk_a
     instantiated_tools = []
     mcp_tools_by_server_and_auth = {}
     user_defined_tools_config = merged_agent_and_model_config.get("tools", [])
-    logger.info(f"user_defined_tools_config for agent '{adk_agent_name}': {user_defined_tools_config}")
+    logger.debug(f"user_defined_tools_config for agent '{adk_agent_name}': {user_defined_tools_config}")
     for tc_idx, tc in enumerate(user_defined_tools_config):
         tool_type = tc.get('type')
         if tool_type is None and tc.get('module_path') and tc.get('class_name'):
@@ -187,7 +207,7 @@ async def _prepare_agent_kwargs_from_config(merged_agent_and_model_config, adk_a
                 auth_credential=auth_credential,
                 errlog= None
             )
-            logger.info(f"toolset: {toolset}")
+            logger.debug(f"toolset: {toolset}")
             mcp_toolset_instance = toolset
 
             instantiated_tools.append(mcp_toolset_instance)
@@ -287,7 +307,7 @@ async def _prepare_agent_kwargs_from_config(merged_agent_and_model_config, adk_a
         try: generate_config_kwargs["temperature"] = float(model_params["temperature"])
         except (ValueError, TypeError): logger.warn(f"Invalid temperature: {model_params['temperature']}")
 
-    # NOTE: The ADK expects 'max_output_tokens' inside GenerateContentConfig, not 'max_tokens' as a direct kwarg.
+        # NOTE: The ADK expects 'max_output_tokens' inside GenerateContentConfig, not 'max_tokens' as a direct kwarg.
     if "maxOutputTokens" in model_params and model_params["maxOutputTokens"] is not None:
         try: generate_config_kwargs["max_output_tokens"] = int(model_params["maxOutputTokens"])
         except (ValueError, TypeError): logger.warn(f"Invalid maxOutputTokens: {model_params['maxOutputTokens']}")
@@ -514,6 +534,8 @@ async def instantiate_adk_agent_from_config(agent_config, parent_adk_name_for_co
 
 __all__ = [
     'generate_vertex_deployment_display_name',
+    'get_adk_artifact_service',
+    'get_model_config_from_firestore',
     'instantiate_tool',
     'sanitize_adk_agent_name',
     'instantiate_adk_agent_from_config'
