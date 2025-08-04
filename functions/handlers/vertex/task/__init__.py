@@ -32,6 +32,7 @@ async def get_full_message_history(chat_id: str, leaf_message_id: str | None) ->
         doc_data = doc.to_dict()
         messages[doc.id] = doc_data
 
+    logger.info(f"[TaskExecutor] Retrieved {len(messages)} messages from Firestore for chat {chat_id}.")
     history = []
     current_id = leaf_message_id
     while current_id and current_id in messages:
@@ -45,26 +46,37 @@ async def _build_adk_content_from_history(
         conversation_history: list[dict]
 ) -> tuple[Content, int]:
     """
-    Constructs a multi-part ADK Content object from the last user message in the history.
-    This content object represents the final prompt for the ADK run.
+    Constructs a multi-part ADK Content object from the entire conversation history.
+    This content object represents the full context/prompt for the ADK run.
     """
     adk_parts = []
     total_char_count = 0
     logger.info(f"[TaskExecutor] Building ADK content from {len(conversation_history)} history messages.")
 
-    # The prompt for the current run is constructed from the last user message,
-    # which may contain both text and file references.
-    last_user_message = next((msg for msg in reversed(conversation_history) if msg.get("participant", "").startswith("user:")), None)
+    # The prompt is constructed from the entire conversation history.
+    # To preserve turn structure within a single Content object, we process each
+    # message and its parts from the history.
+    for message in conversation_history:
+        participant = message.get("participant", "")
+        # Determine role for context. "assistant" becomes "model" for the LLM.
+        role = "model" if participant.startswith("assistant:") else "user"
 
-    if last_user_message:
-        for part_data in last_user_message.get("parts", []):
-            if "text" in part_data:
-                logger.info(f"[TaskExecutor] Adding text part with length {len(part_data['text'])}.")
-                text = part_data.get("text", "")
-                adk_parts.append(Part.from_text(text=text))
-                total_char_count += len(text)
-            elif "file_data" in part_data:
+        # Aggregate all text from the current message into a single string.
+        message_texts = [p.get("text", "") for p in message.get("parts", []) if "text" in p]
+        if message_texts:
+            full_text = "\n".join(message_texts).strip()
+            if full_text:
+                # Prepend the role to the text to distinguish turns, as we are flattening history.
+                adk_parts.append(Part.from_text(text=f"{role}: {full_text}"))
+                total_char_count += len(full_text)
+                logger.info(f"Added text from '{role}' to ADK prompt.")
+
+        # Process file parts separately. They will be associated with the flattened prompt.
+        for part_data in message.get("parts", []):
+            if "file_data" in part_data:
                 file_info = part_data.get("file_data", {})
+                if file_info is None:
+                    file_info = {}
                 uri = file_info.get("file_uri")
                 mime_type = file_info.get("mime_type")
 
@@ -84,7 +96,7 @@ async def _build_adk_content_from_history(
                             logger.info(f"Successfully downloaded image from {uri} to include in ADK prompt.")
                         except Exception as e:
                             logger.error(f"Failed to download image from GCS URI {uri} for ADK prompt: {e}")
-                            adk_parts.append(Part.from_text(text=f"[Error: Could not load image from {uri}]"))
+                            adk_parts.append(Part.from_text(text=f"[{role} Error: Could not load image from {uri}]"))
                     elif mime_type.startswith("text/"):
                         try:
                             if not uri.startswith("gs://"):
@@ -95,26 +107,23 @@ async def _build_adk_content_from_history(
                             bucket = storage_client.bucket(bucket_name)
                             blob = bucket.blob(blob_name)
                             text_content = blob.download_as_text()
-                            adk_parts.append(Part.from_text(text=text_content))
+                            adk_parts.append(Part.from_text(text=f"{role} uploaded file '{blob_name}':\n{text_content}"))
                             logger.info(f"Successfully downloaded text from {uri} to include in ADK prompt.")
                         except Exception as e:
                             logger.error(f"Failed to download text from GCS URI {uri} for ADK prompt: {e}")
-                            adk_parts.append(Part.from_text(text=f"[Error: Could not load text from {uri}]"))
+                            adk_parts.append(Part.from_text(text=f"[{role} Error: Could not load text from {uri}]"))
                     else:
                         # For other file types (like text from PDF), from_uri is appropriate.
                         logger.warn(f"[_build_adk_content_from_history] Throwing a hail mary- file_uris don't usually work...  {mime_type} isn't handled yet.")
                         adk_parts.append(Part.from_uri(file_uri=uri, mime_type=mime_type))
 
-    else:
-        # Handle cases where a run might be triggered without a preceding user message,
-        # which is an edge case in the current UI but good practice to handle.
-        logger.warn("No preceding user message found in history to build ADK content from. This may be expected in some flows.")
-
-
     if not adk_parts:
         logger.warn("No message parts were created. Adding an empty text part to avoid ADK error.")
         adk_parts.append(Part.from_text(text=""))
-    logger.info(f"[TaskExecutor] Found {len(adk_parts)} adk_parts.")
+
+    logger.info(f"[TaskExecutor] Built {len(adk_parts)} ADK parts from {len(conversation_history)} messages.")
+    # The entire history is flattened into a single 'user' turn. This is necessary
+    # given the stateless nature of the task execution.
     return Content(role="user", parts=adk_parts), total_char_count
 
 # --- Agent/Model Execution Logic ---
