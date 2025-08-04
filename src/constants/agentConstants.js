@@ -10,6 +10,13 @@ export const MODEL_PROVIDERS_LITELLM = [
         allowsCustomKey: true,
         liteLlmModelPrefix: "openai",
         models: [
+            { id: "o3-deep-research-2025-06-26", name: "OpenAI o3 Deep Research (2025-06-26)", supportedModes: ['text', 'image'] },
+            { id: "o4-mini-deep-research-2025-06-26", name: "OpenAI o4 Mini Deep Research (2025-06-26)", supportedModes: ['text', 'image'] },
+            { id: "o4-mini-2025-04-16", name:"OpenAI o4 Mini (2025-04-16)", supportedModes: ['text', 'image'] },
+            { id: "o3-mini-2025-01-31", name: "OpenAI o3 Mini (2025-01-31)", supportedModes: ['text'] },
+            { id: "o3-2025-04-16", name: "OpenAI o3 (2025-04-16)", supportedModes: ['text', 'image'] },
+            { id: "gpt-4.1-2025-04-14", name: "GPT-4.1 (2025-04-14)", supportedModes: ['text', 'image'] },
+            { id: "gpt-4.1-mini-2025-04-14", name: "GPT-4.1 Mini (2025-04-14)", supportedModes: ['text', 'image'] },
             { id: "gpt-4.1-nano-2025-04-14", name: "GPT-4.1 Nano (2025-04-14)", supportedModes: ['text', 'image'] },
             { id: "gpt-4o", name: "GPT-4o (Omni)", supportedModes: ['text', 'image'] },
             { id: "gpt-4-turbo", name: "GPT-4 Turbo", supportedModes: ['text', 'image'] },
