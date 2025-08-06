@@ -121,6 +121,7 @@ const Navbar = () => {
                     <MenuItem onClick={() => handleSelectTheme('default')}>Default</MenuItem>
                     <MenuItem onClick={() => handleSelectTheme('clientA')}>Client A</MenuItem>
                     <MenuItem onClick={() => handleSelectTheme('clientB')}>Client B</MenuItem>
+                    <MenuItem onClick={() => handleSelectTheme('carbon')}>Carbon</MenuItem>
                 </Menu>
 
                 {currentUser ? (
