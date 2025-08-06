@@ -140,7 +140,9 @@ const AgentsPage = () => {
     const handlePlatformSelected = (platform) => {
         setIsPlatformDialogOpen(false);
         if (platform.id === PLATFORM_IDS.GOOGLE_VERTEX) {
-            navigate('/create-agent', { state: { platformId: platform.id } });
+            navigate('/create-agent', {state: {platformId: platform.id}});
+        } else if (platform.id === PLATFORM_IDS.A2A) {
+            navigate('/import-a2a-agent');
         } else if (!platform.isConstructed) {
             navigate(`/platform-under-construction/${platform.id}`);
         }
