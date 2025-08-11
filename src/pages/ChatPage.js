@@ -8,8 +8,9 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage';
 import {
     Container, Typography, Box, Paper, Button, TextField, Menu, MenuItem,
-    Avatar, ButtonGroup, ListSubheader, Divider, CircularProgress, Chip
+    Avatar, ButtonGroup, ListSubheader, Divider, CircularProgress
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import PersonIcon from '@mui/icons-material/Person';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import ModelTrainingIcon from '@mui/icons-material/ModelTraining';
@@ -17,7 +18,6 @@ import MessageActions from '../components/chat/MessageActions';
 import AgentReasoningLogDialog from '../components/agents/AgentReasoningLogDialog';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import AttachmentIcon from '@mui/icons-material/Attachment';
-import CancelIcon from '@mui/icons-material/Cancel';
 
 // Markdown Imports
 import ReactMarkdown from 'react-markdown';
@@ -31,9 +31,19 @@ import ImageContextModal from '../components/context_stuffing/ImageContextModal'
 import PdfContextModal from '../components/context_stuffing/PdfContextModal';
 import { fetchWebPageContent, fetchGitRepoContents, processPdfContent, uploadImageForContext } from '../services/contextService';
 
+// Re-integrated Context Display/Revealer
+import ContextDisplayBubble from '../components/context_stuffing/ContextDisplayBubble';
+import ContextDetailsDialog from '../components/context_stuffing/ContextDetailsDialog';
+
 // Helper for user-friendly participant display
 const parseParticipant = (str, models, agents, currentUser) => {
     if (!str) return { label: 'Unknown', icon: <PersonIcon /> };
+
+    // Special system message for context stuffing
+    if (str === 'context_stuffed') {
+        return { label: 'Context', icon: <AttachmentIcon color="info" /> };
+    }
+
     const [type, id] = str.split(':');
     if (type === 'user') {
         if (currentUser && id === currentUser.uid) return { label: 'You', icon: <Avatar src={currentUser.photoURL}>{currentUser.displayName?.slice(0, 1)}</Avatar> };
@@ -82,8 +92,54 @@ function findLeafOfBranch(messagesMap, branchRootId) {
     }
 }
 
+const convertPartToContextItem = (part) => {
+    if (!part) return null;
+    if (part.file_data) {
+        const uri = part.file_data?.file_uri || '';
+        const mime = part.file_data?.mime_type || '';
+        const name = uri.split('/').pop() || 'Attachment';
+        let type = 'file';
+        if (mime.startsWith('image/')) type = 'image';
+        else if (mime.includes('pdf')) type = 'pdf';
+        return {
+            name,
+            type,
+            bytes: null,
+            content: null,
+            signedUrl: uri,
+            mimeType: mime,
+            preview: part.preview || null
+        };
+    }
+    if (part.text) {
+        return {
+            name: 'Text Context',
+            type: 'text',
+            content: part.text,
+            bytes: null,
+            signedUrl: null,
+            mimeType: 'text/plain',
+            preview: part.preview || null
+        };
+    }
+    return null;
+};
+
+const extractContextItemsFromMessage = (msg) => {
+    // For context messages, convert each part (including preview if present)
+    if (msg?.participant === 'context_stuffed') {
+        if (Array.isArray(msg.parts) && msg.parts.length > 0) {
+            return msg.parts
+                .map(convertPartToContextItem)
+                .filter(Boolean);
+        }
+    }
+    // Backward compatibility fallbacks (older fields)
+    return msg.items || msg.contextItems || msg.stuffedContextItems || [];
+};
 
 const ChatPage = () => {
+    const theme = useTheme();
     const { currentUser } = useAuth();
     const { chatId } = useParams();
     const chatEndRef = useRef(null);
@@ -107,10 +163,13 @@ const ChatPage = () => {
     const [loadingEvents, setLoadingEvents] = useState(false);
 
     // --- New Context State ---
-    const [pendingContextParts, setPendingContextParts] = useState([]);
     const [contextModalType, setContextModalType] = useState(null);
     const [isContextModalOpen, setIsContextModalOpen] = useState(false);
     const [isContextLoading, setIsContextLoading] = useState(false);
+
+    // Re-integrated details dialog state
+    const [contextDetailsOpen, setContextDetailsOpen] = useState(false);
+    const [contextDetailsItems, setContextDetailsItems] = useState([]);
 
     const conversationPath = useMemo(() => {
         if (!messagesMap || !activeLeafMsgId) return [];
@@ -189,33 +248,25 @@ const ChatPage = () => {
         setSending(true);
         setError(null);
         try {
-            const finalParts = [];
             if (composerAction.type === 'text') {
-                if (!composerValue.trim() && pendingContextParts.length === 0) return;
-                if (composerValue.trim()) {
-                    finalParts.push({ text: composerValue });
+                const trimmed = composerValue.trim();
+                if (trimmed.length > 0) {
+                    const finalParts = [{ text: trimmed }];
+                    await addChatMessage(chatId, {
+                        participant: `user:${currentUser.uid}`,
+                        parts: finalParts,
+                        parentMessageId: activeLeafMsgId
+                    });
+                    setComposerValue('');
                 }
-            }
-            finalParts.push(...pendingContextParts.map(p => ({ file_data: p.file_data })));
-
-            if (composerAction.type === 'text') {
-                await addChatMessage(chatId, {
-                    participant: `user:${currentUser.uid}`,
-                    parts: finalParts,
-                    parentMessageId: activeLeafMsgId
-                });
-                setComposerValue('');
-                setPendingContextParts([]);
             } else if (composerAction.type === 'agent' || composerAction.type === 'model') {
                 await executeQuery({
                     chatId,
                     agentId: composerAction.type === 'agent' ? composerAction.id : undefined,
                     modelId: composerAction.type === 'model' ? composerAction.id : undefined,
                     adkUserId: currentUser.uid,
-                    parentMessageId: activeLeafMsgId,
-                    stuffedContextItems: pendingContextParts.length > 0 ? pendingContextParts : null
+                    parentMessageId: activeLeafMsgId
                 });
-                setPendingContextParts([]);
             }
         } catch (err) { setError(err.message); } finally { setSending(false); }
     };
@@ -232,32 +283,57 @@ const ChatPage = () => {
         handleCloseContextModal();
         try {
             let result;
-            if (params.type === 'webpage') result = await fetchWebPageContent(params.url);
-            else if (params.type === 'gitrepo') result = await fetchGitRepoContents(params);
-            else if (params.type === 'pdf') result = await processPdfContent(params);
-            else if (params.type === 'image') result = await uploadImageForContext(params.file);
-            else throw new Error("Unknown context type");
-
-            if (result.success) {
-                setPendingContextParts(prev => [...prev, {
-                    name: result.name,
-                    file_data: { file_uri: result.storageUrl, mime_type: result.mimeType }
-                }]);
+            if (params.type === 'webpage') {
+                result = await fetchWebPageContent({ url: params.url, chatId, parentMessageId: activeLeafMsgId });
+            } else if (params.type === 'gitrepo') {
+                result = await fetchGitRepoContents({ ...params, chatId, parentMessageId: activeLeafMsgId });
+            } else if (params.type === 'pdf') {
+                result = await processPdfContent({ ...params, chatId, parentMessageId: activeLeafMsgId });
+            } else if (params.type === 'image') {
+                result = await uploadImageForContext({ file: params.file, chatId, parentMessageId: activeLeafMsgId });
             } else {
-                throw new Error(result.message || "Failed to process context item.");
+                throw new Error("Unknown context type");
             }
+
+            if (!result?.success) {
+                throw new Error(result?.message || "Failed to process context item.");
+            }
+            // No need to handle local state; the backend creates the context message and the listener will update the UI.
         } catch (err) { setError(`Failed to add context: ${err.message}`); } finally { setIsContextLoading(false); }
     };
 
-    const removePendingContextPart = (index) => {
-        setPendingContextParts(prev => prev.filter((_, i) => i !== index));
+    // Context details dialog open helper
+    const openContextDetailsForMessage = (msg) => {
+        const items = extractContextItemsFromMessage(msg);
+        setContextDetailsItems(items);
+        setContextDetailsOpen(true);
     };
 
+    // Bubble color styling based on theme
+    const getBubbleSxForMessage = (msg) => {
+        const isUserMsg = msg.participant?.startsWith('user:');
+        const isAssistantMsg = msg.participant?.startsWith('agent') || msg.participant?.startsWith('model');
+
+        if (!isUserMsg && !isAssistantMsg) return {};
+
+        const userBg = theme.palette.userChatBubble || theme.palette.primary.light;
+        const machineBg = theme.palette.machineChatBubble || theme.palette.secondary.light;
+
+        const bg = isUserMsg ? userBg : machineBg;
+        const color = theme.palette.getContrastText ? theme.palette.getContrastText(bg) : undefined;
+
+        return {
+            bgcolor: bg,
+            color: color,
+            border: '1px solid',
+            borderColor: 'transparent',
+        };
+    };
 
     if (loading || !chat) return <Box sx={{ display: 'flex', justifyContent: 'center' }}><LoadingSpinner /></Box>;
     if (error && !conversationPath.length) return <ErrorMessage message={error} />;
 
-    const sendButtonDisabled = sending || isContextLoading || (composerAction.type === 'text' && !composerValue.trim() && pendingContextParts.length === 0);
+    const sendButtonDisabled = sending || isContextLoading || (composerAction.type === 'text' && !composerValue.trim());
 
     return (
         <Container sx={{ py: 3 }}>
@@ -285,36 +361,76 @@ const ChatPage = () => {
                     {conversationPath.map((msg) => {
                         const participant = parseParticipant(msg.participant, models, agents, currentUser);
                         const isAssistant = msg.participant?.startsWith('agent') || msg.participant?.startsWith('model');
+                        const isContextMessage = msg.participant === 'context_stuffed';
+                        const fileDataParts = (msg.parts || []).filter(p => p.file_data);
+
                         return (
                             <Box key={msg.id} sx={{ position: 'relative', mb: 1, mt: 'auto' }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                                     {participant.icon}
                                     <Typography variant="subtitle2">{participant.label}</Typography>
                                 </Box>
-                                <Paper variant="outlined" sx={{ p: 1.5, wordBreak: 'break-word', whiteSpace: 'pre-wrap', mb: 0.5 }}>
-                                    {(msg.parts || []).map((part, index) => {
-                                        if (part.text) {
-                                            return <ReactMarkdown key={index} components={muiMarkdownComponentsConfig} remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>;
-                                        }
-                                        if (part.file_data) {
+
+                                {isContextMessage ? (
+                                    <ContextDisplayBubble
+                                        contextMessage={{ items: extractContextItemsFromMessage(msg) }}
+                                        onOpenDetails={() => openContextDetailsForMessage(msg)}
+                                    />
+                                ) : (
+                                    <>
+                                        <Paper
+                                            sx={{
+                                                p: 1.5,
+                                                wordBreak: 'break-word',
+                                                whiteSpace: 'pre-wrap',
+                                                mb: 0.5,
+                                                borderRadius: 2,
+                                                ...getBubbleSxForMessage(msg),
+                                            }}
+                                        >
+                                            {(msg.parts || []).map((part, index) => {
+                                                if (part.text) {
+                                                    return <ReactMarkdown key={index} components={muiMarkdownComponentsConfig} remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>;
+                                                }
+                                                // do not render file_data chips inside the user's/assistant's message anymore
+                                                return null;
+                                            })}
+                                            {msg.status === 'running' && (
+                                                <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
+                                                    <LoadingSpinner small />
+                                                    <Typography variant="caption" sx={{ ml: 1 }}>Thinking...</Typography>
+                                                </Box>
+                                            )}
+                                            {msg.status === 'error' && (
+                                                <Box sx={{ mt: 1 }}>
+                                                    <ErrorMessage message={(msg.errorDetails || []).join('\n')} severity="warning" />
+                                                </Box>
+                                            )}
+                                        </Paper>
+
+                                        {/* Render each legacy file_data as its own context bubble below the message */}
+                                        {fileDataParts.map((part, idx) => {
+                                            const item = convertPartToContextItem(part);
+                                            const openDetails = () => {
+                                                setContextDetailsItems([item]);
+                                                setContextDetailsOpen(true);
+                                            };
                                             return (
-                                                <Chip key={index} icon={<AttachmentIcon />} label={part.file_data.file_uri.split('/').pop()} size="small" sx={{ mr: 0.5, mb: 0.5 }} />
+                                                <Box key={`${msg.id}-ctx-${idx}`} sx={{ mb: 0.5 }}>
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                                                        <AttachmentIcon color="info" />
+                                                        <Typography variant="subtitle2">Context</Typography>
+                                                    </Box>
+                                                    <ContextDisplayBubble
+                                                        contextMessage={{ items: [item] }}
+                                                        onOpenDetails={openDetails}
+                                                    />
+                                                </Box>
                                             );
-                                        }
-                                        return null;
-                                    })}
-                                    {msg.status === 'running' && (
-                                        <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                                            <LoadingSpinner small />
-                                            <Typography variant="caption" sx={{ ml: 1 }}>Thinking...</Typography>
-                                        </Box>
-                                    )}
-                                    {msg.status === 'error' && (
-                                        <Box sx={{ mt: 1 }}>
-                                            <ErrorMessage message={(msg.errorDetails || []).join('\n')} severity="warning" />
-                                        </Box>
-                                    )}
-                                </Paper>
+                                        })}
+                                    </>
+                                )}
+
                                 <MessageActions
                                     message={msg} messagesMap={messagesMap} activePath={conversationPath}
                                     onNavigate={handleNavigateBranch} onFork={handleFork} onViewLog={handleOpenReasoningLog}
@@ -326,21 +442,6 @@ const ChatPage = () => {
                     })}
                     <div ref={chatEndRef} />
                 </Box>
-
-                {pendingContextParts.length > 0 && (
-                    <Box sx={{ mt: 2, p: 1, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
-                        <Typography variant="caption" color="text.secondary">Pending attachments:</Typography>
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
-                            {pendingContextParts.map((part, index) => (
-                                <Chip
-                                    key={index} icon={<AttachmentIcon />} label={part.name}
-                                    onDelete={() => removePendingContextPart(index)}
-                                    deleteIcon={<CancelIcon />}
-                                />
-                            ))}
-                        </Box>
-                    </Box>
-                )}
 
                 <Box component="form" onSubmit={handleActionSubmit} sx={{ display: 'flex', alignItems: 'flex-end', mt: 2, gap: 1 }}>
                     {composerAction.type === 'text' && (
@@ -375,6 +476,9 @@ const ChatPage = () => {
             </Paper>
 
             <AgentReasoningLogDialog open={isReasoningLogOpen} onClose={handleCloseReasoningLog} events={loadingEvents ? [] : selectedEventsForLog} />
+            {/* Context details dialog */}
+            <ContextDetailsDialog open={contextDetailsOpen} onClose={() => setContextDetailsOpen(false)} contextItems={contextDetailsItems} />
+
             {isContextModalOpen && contextModalType === 'webpage' && (<WebPageContextModal open={isContextModalOpen} onClose={handleCloseContextModal} onSubmit={handleContextSubmit} />)}
             {isContextModalOpen && contextModalType === 'gitrepo' && (<GitRepoContextModal open={isContextModalOpen} onClose={handleCloseContextModal} onSubmit={handleContextSubmit} />)}
             {isContextModalOpen && contextModalType === 'pdf' && (<PdfContextModal open={isContextModalOpen} onClose={handleCloseContextModal} onSubmit={handleContextSubmit} />)}
