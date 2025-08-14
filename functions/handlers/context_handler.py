@@ -31,7 +31,7 @@ def _upload_bytes_to_gcs(
         storage_client = storage.Client()
         bucket = storage_client.bucket(bucket_name)
         if not bucket.exists():
-            logger.warning(f"Storage bucket '{bucket_name}' not found. Creating it with default settings.")
+            logger.warn(f"Storage bucket '{bucket_name}' not found. Creating it with default settings.")
             bucket = storage_client.create_bucket(bucket, location=os.environ.get("FUNCTION_REGION", "us-central1"))
 
         _, file_extension = os.path.splitext(file_name)
@@ -48,7 +48,7 @@ def _upload_bytes_to_gcs(
                 public_url = blob.public_url
                 logger.info(f"Made blob public at URL: {public_url}")
             except Exception as e:
-                logger.warning(f"Failed to make blob public: {e}")
+                logger.warn(f"Failed to make blob public: {e}")
 
         storage_uri = f"gs://{bucket.name}/{blob.name}"
         logger.info(f"Context file for user {user_id} uploaded to {storage_uri}.")
